@@ -31,7 +31,7 @@ export const KEY_SETUP_KEYS = Object.freeze([
   Object.freeze({
     id: 'google-maps',
     title: 'GOOGLE MAPS',
-    unlocks: 'The photorealistic 3D planet + place search',
+    unlocks: 'Planet 3D fotorealistik + pencarian tempat',
     getUrl: 'https://developers.google.com/maps/documentation/tile/get-api-key',
     envVars: Object.freeze(['GOOGLE_MAPS_API_KEY']),
     tier: 'metered',
@@ -40,7 +40,7 @@ export const KEY_SETUP_KEYS = Object.freeze([
   Object.freeze({
     id: 'openai',
     title: 'OPENAI',
-    unlocks: 'Voice control — talk to the planet',
+    unlocks: 'Kontrol suara — bicara dengan planet',
     getUrl: 'https://platform.openai.com/api-keys',
     envVars: Object.freeze(['OPENAI_API_KEY']),
     tier: 'metered',
@@ -48,7 +48,7 @@ export const KEY_SETUP_KEYS = Object.freeze([
   Object.freeze({
     id: 'aisstream',
     title: 'AISSTREAM',
-    unlocks: 'Live ships, worldwide',
+    unlocks: 'Kapal langsung, seluruh dunia',
     getUrl: 'https://aisstream.io',
     envVars: Object.freeze(['AISSTREAM_API_KEY']),
     tier: 'free',
@@ -56,7 +56,7 @@ export const KEY_SETUP_KEYS = Object.freeze([
   Object.freeze({
     id: 'firms',
     title: 'NASA FIRMS',
-    unlocks: 'Live active-fire detections',
+    unlocks: 'Deteksi kebakaran aktif langsung',
     getUrl: 'https://firms.modaps.eosdis.nasa.gov/api/map_key/',
     envVars: Object.freeze(['FIRMS_MAP_KEY']),
     tier: 'free',
@@ -64,7 +64,7 @@ export const KEY_SETUP_KEYS = Object.freeze([
   Object.freeze({
     id: 'tomtom',
     title: 'TOMTOM',
-    unlocks: 'Real live traffic (keyless runs a simulation)',
+    unlocks: 'Lalu lintas asli (tanpa kunci memakai simulasi)',
     getUrl: 'https://developer.tomtom.com',
     envVars: Object.freeze(['TOMTOM_API_KEY']),
     tier: 'free',
@@ -72,7 +72,7 @@ export const KEY_SETUP_KEYS = Object.freeze([
   Object.freeze({
     id: 'cesium-ion',
     title: 'CESIUM ION',
-    unlocks: 'Bing imagery map stacks + world terrain',
+    unlocks: 'Tumpukan peta citra Bing + terrain dunia',
     getUrl: 'https://ion.cesium.com/tokens',
     envVars: Object.freeze(['CESIUM_ION_TOKEN']),
     tier: 'free',
@@ -81,7 +81,7 @@ export const KEY_SETUP_KEYS = Object.freeze([
   Object.freeze({
     id: 'opensky',
     title: 'OPENSKY',
-    unlocks: 'More flight-polling credits (anonymous works without)',
+    unlocks: 'Kuota polling penerbangan lebih besar (anonim juga bisa)',
     getUrl: 'https://opensky-network.org',
     envVars: Object.freeze(['OPENSKY_CLIENT_ID', 'OPENSKY_CLIENT_SECRET']),
     tier: 'free',
@@ -89,9 +89,17 @@ export const KEY_SETUP_KEYS = Object.freeze([
   Object.freeze({
     id: 'launch-library',
     title: 'LAUNCH LIBRARY',
-    unlocks: 'Higher space-missions request allowance',
+    unlocks: 'Kuota permintaan misi luar angkasa lebih tinggi',
     getUrl: 'https://thespacedevs.com',
     envVars: Object.freeze(['LL2_API_TOKEN']),
+    tier: 'free',
+  }),
+  Object.freeze({
+    id: 'api-indonesia',
+    title: 'API INDONESIA',
+    unlocks: 'Rumah sakit nasional + halte Transjakarta',
+    getUrl: 'https://dashboard.apiindonesia.id',
+    envVars: Object.freeze(['API_INDONESIA_KEY']),
     tier: 'free',
   }),
 ]);

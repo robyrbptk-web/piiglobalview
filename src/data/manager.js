@@ -1,5 +1,6 @@
 import { governorRequestRender } from '../renderGovernor.js';
 import { markDetectionSourcesChanged } from './detection.js';
+import { displayLayerName } from './layerDisplayNames.js';
 function cloneLayerParams(value) {
   if (Array.isArray(value)) return value.map(cloneLayerParams);
   if (value && typeof value === 'object') {
@@ -2033,7 +2034,7 @@ export class DataLayerManager {
 
       const left = document.createElement('div');
       left.className = 'data-toggle-left';
-      left.innerHTML = `<span class="data-icon">${layer.icon}</span><span class="data-name">${layer.name}</span>`;
+      left.innerHTML = `<span class="data-icon">${layer.icon}</span><span class="data-name">${displayLayerName(layer)}</span>`;
 
       const right = document.createElement('div');
       right.className = 'data-toggle-right';
@@ -2226,11 +2227,11 @@ export class DataLayerManager {
       }
       return `${stateLabel} · ${source} · ${presentedError}`;
     }
-    const ago = stats.lastUpdate ? this._timeAgo(stats.lastUpdate) : 'never';
+    const ago = stats.lastUpdate ? this._timeAgo(stats.lastUpdate) : 'belum pernah';
     if (stats.loading) {
       const loadingLabel = typeof stats.loadingLabel === 'string' && stats.loadingLabel.trim()
         ? stats.loadingLabel.trim()
-        : 'loading...';
+        : 'memuat...';
       return `${source} · ${loadingLabel}`;
     }
     if (feedState === 'fallback') {
@@ -2270,7 +2271,7 @@ export class DataLayerManager {
     button.textContent = transitioning
       ? layer.lifecycleState.toUpperCase()
       : (uncertain ? 'UNCERTAIN' : (layer.enabled ? FEED_STATE_LABELS[feedState] : 'OFF'));
-    button.setAttribute('aria-label', `${layer.name}: ${button.textContent}`);
+    button.setAttribute('aria-label', `${displayLayerName(layer)}: ${button.textContent}`);
   }
 
   _formatCount(n) {
@@ -2280,9 +2281,9 @@ export class DataLayerManager {
 
   _timeAgo(timestamp) {
     const diff = Math.floor((Date.now() - timestamp) / 1000);
-    if (diff < 5) return 'just now';
-    if (diff < 60) return `${diff}s ago`;
-    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-    return `${Math.floor(diff / 3600)}h ago`;
+    if (diff < 5) return 'baru saja';
+    if (diff < 60) return `${diff} dtk lalu`;
+    if (diff < 3600) return `${Math.floor(diff / 60)} mnt lalu`;
+    return `${Math.floor(diff / 3600)} jam lalu`;
   }
 }

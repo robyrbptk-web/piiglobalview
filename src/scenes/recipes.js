@@ -6,7 +6,7 @@
 export const SCENE_RECIPES = [
   {
     id: 'flights-radar',
-    title: 'Global Flights Radar',
+    title: 'Radar Penerbangan Global',
     durationSec: 30,
     style: 'retro',
     ui: { hidePanels: true, hudMode: 'minimal', safeFrame: '16:9' },
@@ -31,7 +31,7 @@ export const SCENE_RECIPES = [
   },
   {
     id: 'orbital-watch',
-    title: 'Orbital Watch',
+    title: 'Pantauan Orbit',
     durationSec: 32,
     style: 'surveillance',
     ui: { hidePanels: true, hudMode: 'full', safeFrame: '16:9' },
@@ -64,7 +64,7 @@ export const SCENE_RECIPES = [
   },
   {
     id: 'thermal-threats',
-    title: 'Thermal Threat Board',
+    title: 'Papan Ancaman Termal',
     durationSec: 26,
     style: 'thermal',
     ui: { hidePanels: true, hudMode: 'full', safeFrame: '16:9' },
@@ -96,7 +96,7 @@ export const SCENE_RECIPES = [
   },
   {
     id: 'city-overload',
-    title: 'City Overload',
+    title: 'Beban Kota',
     durationSec: 30,
     style: 'surveillance',
     ui: { hidePanels: true, hudMode: 'minimal', safeFrame: '9:16' },
@@ -129,7 +129,7 @@ export const SCENE_RECIPES = [
   },
   {
     id: 'omniscience-pullback',
-    title: 'Omniscience Pullback',
+    title: 'Tarik Mundur Omniscience',
     durationSec: 36,
     style: 'retro',
     ui: { hidePanels: true, hudMode: 'full', safeFrame: '16:9' },

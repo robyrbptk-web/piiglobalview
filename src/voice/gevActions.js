@@ -176,6 +176,20 @@ const LAYER_ALIASES = new Map([
   ['firms', 'local-firms'],
   ['fires', 'local-firms'],
   ['active fires', 'local-firms'],
+  ['schools', 'indonesian-schools'],
+  ['sekolah', 'indonesian-schools'],
+  ['indonesian schools', 'indonesian-schools'],
+  ['volcanoes', 'indonesian-volcanoes'],
+  ['volcano', 'indonesian-volcanoes'],
+  ['gunung api', 'indonesian-volcanoes'],
+  ['gunung berapi', 'indonesian-volcanoes'],
+  ['hospitals', 'indonesian-hospitals'],
+  ['hospital', 'indonesian-hospitals'],
+  ['rumah sakit', 'indonesian-hospitals'],
+  ['transjakarta', 'transjakarta-halte'],
+  ['trans jakarta', 'transjakarta-halte'],
+  ['halte', 'transjakarta-halte'],
+  ['bus stops', 'transjakarta-halte'],
 ]);
 
 const CITY_ALIASES = new Map([

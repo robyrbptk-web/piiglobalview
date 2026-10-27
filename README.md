@@ -125,6 +125,20 @@ manually.
 **macOS shortcut:** `./scripts/dev-fresh.sh` clears the Vite cache and pulls any
 configured keys straight from the Keychain. It starts keyless too.
 
+### Previewing it in an editor (VS Code etc.)
+
+Opening `index.html` directly can never work: the source tree imports `cesium`
+by bare name and every data layer talks to the `/api/*` routes that
+`vite.config.js` proxies, and a static file server resolves neither — the page
+stops at the loader. Two ways that do work:
+
+- **Dev (full app, live keys):** `npm run dev`, then point the editor's browser
+  at the printed URL (`http://127.0.0.1:5180` here).
+- **Build (portable bundle):** `npm run build && npm run preview`. The build
+  uses a **relative base**, so `dist/` also opens under any plain static server
+  (rooted at `dist/`) with no Vite behind it — the globe boots, but key-brokered
+  `/api/*` layers report unavailable because a static server has no proxies.
+
 ### Then power it up — in the app, not in a file
 
 Keys are upgrades, not prerequisites. When you want one, click the **POWER UP**

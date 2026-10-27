@@ -222,15 +222,22 @@ body.cockpit-mode #cockpit-cloud-effects.active {
   display: none !important;
 }
 
-/* Data-source attribution (Google Maps / 3D Tiles, etc.).
-   Required by the Google Maps Platform Terms of Service — keep it visible.
-   Styled to be unobtrusive but legible against the dark UI. */
+/* Data-source attribution (Google Maps / 3D Tiles, Cesium ion, Esri, ODbL ...).
+   OWNER DIRECTIVE 2026-10-27 (PII Global View rebrand): the globe carries no
+   third-party logo and no "Powered by" text — this product's only mark is
+   logo-pii. The container is still created by main.js and Cesium still fills
+   it, so re-enabling is one property flip; the license text itself stays
+   recorded in DATA_SOURCES.md and src/data/dataCredits.js.
+   COMPLIANCE RISK: Google Maps Platform, Cesium ion and Esri terms require a
+   VISIBLE attribution notice. Public/hosted deployments that show Google or
+   Esri imagery must flip this back on before shipping. */
 #cesium-credits {
+  display: none !important;
   position: fixed;
   /* Bottom-LEFT corner, mirrored from the GEV mic pill (right:36/bottom:36) so the two bottom
      corners are symmetric; sits below the coordinate HUD (.hud-bottom-left, bottom:180). Was
-     dead-center at the bottom, tucked under the LOCATIONS/STYLE panels. Must stay visible (Google
-     /Cesium attribution ToS). */
+     dead-center at the bottom, tucked under the LOCATIONS/STYLE panels. Kept as layout so the
+     measured clearance constants still describe a real box if the owner re-enables it. */
   bottom: 36px;
   left: 36px;
   z-index: 90;
@@ -527,6 +534,63 @@ body.cockpit-mode #cockpit-cloud-effects.active {
   display: block;
   width: 100%;
   height: 100%;
+}
+
+/* PII emblem is a white-background raster (public/logo-pii.png, 1145x1374).
+   The badge stays square and the image is CONTAINED inside it, so the portrait
+   artwork is neither stretched nor cropped: a circle mask would shave the top
+   and bottom of a non-square mark, so the badge is a rounded square instead.
+   The white padding ring reads as part of the emblem, not as letterboxing. */
+.brand-logo.pii-logo {
+  aspect-ratio: 1;
+  width: 46px;
+  height: 46px;
+  padding: 5px;
+  background: #fff;
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 0 18px rgba(0, 212, 255, 0.35);
+}
+
+.brand-logo.pii-logo > img {
+  object-fit: contain;
+}
+
+#title-bar .title-logo.pii-logo {
+  width: 46px;
+  height: 46px;
+}
+
+.loader-logo.pii-logo {
+  width: 112px;
+  height: 112px;
+  padding: 12px;
+  background: #fff;
+  border-radius: 30px;
+  overflow: hidden;
+  box-shadow: 0 0 34px rgba(0, 212, 255, 0.4);
+  filter: none;
+}
+
+.loader-logo.pii-logo > img {
+  object-fit: contain;
+}
+
+#title-bar .brand-credit {
+  margin-top: 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  color: rgba(232, 234, 237, 0.55);
+  text-transform: none;
+}
+
+.loader-credit {
+  margin-top: 10px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  color: rgba(232, 234, 237, 0.5);
 }
 
 #title-bar .title-accent,
@@ -6269,6 +6333,26 @@ body.cockpit-mode #intel-hud .hud-right-edge { right: 22px; }
 
 #cctv-frame.active {
   opacity: 1;
+}
+
+/* Live HLS cameras have no snapshot endpoint; the panel plays the same proxied
+   stream the monitor plane uses. The <video> sits in the same box as the frame
+   image and only takes over while .video-mode is set on the wrap. */
+.cctv-frame-wrap.video-mode #cctv-frame {
+  display: none;
+}
+
+#cctv-video {
+  display: none;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  height: auto;
+  object-fit: contain;
+  background: #000;
+}
+
+#cctv-video.active {
+  display: block;
 }
 
 #cctv-meta {

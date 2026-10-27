@@ -334,10 +334,10 @@ test('the Visual Presets tray owns Map Source and the retired left panel is abse
   assert.doesNotMatch(html, /map-stack-select/, 'the SOURCE dropdown is replaced by the chip row');
   assert.match(
     html,
-    /<section class="map-source-section"[\s\S]*?<div id="map-stack-chips" class="map-stack-chip-row" role="group" aria-label="Map source"><\/div>/,
+    /<section class="map-source-section"[\s\S]*?<div id="map-stack-chips" class="map-stack-chip-row" role="group" aria-label="Sumber peta"><\/div>/,
   );
   assert.doesNotMatch(html, /id="stack-panel"/, 'the duplicate left MAP STACK panel is retired');
-  assert.match(html, /id="map-source-label">MAP SOURCE<[\s\S]*?id="map-stack-status"/);
+  assert.match(html, /id="map-source-label">SUMBER PETA<[\s\S]*?id="map-stack-status"/);
   assert.match(
     html,
     /<button id="control-panel-toggle"[\s\S]*?data-dock-toggle-target="control-panel"[\s\S]*?aria-controls="control-panel-popover"/,

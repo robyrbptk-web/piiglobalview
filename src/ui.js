@@ -61,7 +61,7 @@ import flightsLayer from './data/flights.js';
 import militaryFlightsLayer from './data/militaryFlights.js';
 import { isTr3b, toggleTr3b } from './data/tr3bRegistry.js';
 import satellitesLayer from './data/satellites.js';
-import cctvLayer from './data/cctv.js';
+import cctvLayer, { attachHlsToVideo } from './data/cctv.js';
 import radioLayer, {
   buildRadioTunerTicks,
   radioTunerCommitSlot,
@@ -2345,9 +2345,28 @@ export class StyleManager {
     this._cctvCalibSaveBtn = document.getElementById('cctv-calib-save-btn');
     this._cctvCalibResetBtn = document.getElementById('cctv-calib-reset-btn');
     this._cctvFrame = document.getElementById('cctv-frame');
+    this._cctvVideo = document.getElementById('cctv-video');
     this._cctvFrameWrap = document.getElementById('cctv-frame-wrap');
     this._cctvFrameRequestToken = 0;
     this._cctvFramePreloader = null;
+    this._cctvVideoRequestToken = 0;
+    this._cctvHls = null;
+    this._cctvVideoSrc = '';
+    if (this._cctvVideo) {
+      this._cctvVideo.addEventListener('playing', () => {
+        this._cctvVideo.classList.add('active');
+        this._cctvFrameWrap?.classList.remove('loading');
+        this._cctvFrameWrap?.classList.add('has-frame');
+        if (this._cctvFrame) {
+          this._cctvFrame.dataset.loading = '';
+          this._cctvFrame.dataset.error = '';
+        }
+        this._syncCctvSourceBadge(
+          this._cctvState?.activeCamera,
+          !!this._cctvState?.enabled && !!this._dataManager?.isEnabled('cctv')
+        );
+      });
+    }
     this._cctvSourceBadge = document.getElementById('cctv-source-badge');
     this._cctvMeta = document.getElementById('cctv-meta');
     this._cctvSummary = document.getElementById('cctv-summary');
@@ -3899,7 +3918,7 @@ export class StyleManager {
       clearTimeout(this._cctvChipHideTimer);
       this._cctvChipHideTimer = null;
       this._cctvChipWasBusy = true;
-      setSplitFlapText(this._cctvSyncLabel, 'loading frames');
+      setSplitFlapText(this._cctvSyncLabel, 'memuat bingkai');
       // The counter is left plain on purpose: it ticks every few frames
       // during a grid load, and flapping it would read as a slot machine.
       this._cctvSyncProgress.textContent = `${loaded}/${total}`;
@@ -3910,7 +3929,7 @@ export class StyleManager {
     if (this._cctvChipWasBusy && enabled && total > 0) {
       // Load just completed — flash the final count, then auto-hide.
       this._cctvChipWasBusy = false;
-      setSplitFlapText(this._cctvSyncLabel, 'camera grid ready');
+      setSplitFlapText(this._cctvSyncLabel, 'grid kamera siap');
       this._cctvSyncProgress.textContent = `${total}/${total}`;
       this._cctvSyncChip.classList.add('visible');
       clearTimeout(this._cctvChipHideTimer);
@@ -4081,7 +4100,7 @@ export class StyleManager {
       const hadOldPositions = Object.keys(localStorage)
         .some((key) => key.startsWith('godsEyeView.v6.panelPos.'));
       if (hadOldPositions) {
-        this._showToast('Panel layout updated — positions reset to new defaults');
+        this._showToast('Tata letak panel diperbarui — posisi diatur ulang ke bawaan baru');
       }
     } catch {
       // storage unavailable
@@ -5158,7 +5177,7 @@ export class StyleManager {
     }
     if (change?.type === 'visibility-blocked') {
       if (!this._userFacingContextNotificationTokens.has(change.notificationToken)) {
-        this._showToast(change.reason || 'That layer is unavailable in the current Context mode');
+        this._showToast(change.reason || 'Lapisan itu tidak tersedia dalam mode Konteks saat ini');
       }
       this._syncContextModeButtons();
       return;
@@ -5508,11 +5527,11 @@ export class StyleManager {
       if (result && !result.ok) {
         this._radioTunerBandPinnedForNavigation = false;
         if (result.reason === 'station-unavailable') {
-          if (this._radioTunerValue) this._radioTunerValue.textContent = 'OFF AIR';
-          if (this._radioTunerStation) this._radioTunerStation.textContent = 'STATION UNAVAILABLE';
+          if (this._radioTunerValue) this._radioTunerValue.textContent = 'TIDAK MENGUDARA';
+          if (this._radioTunerStation) this._radioTunerStation.textContent = 'STASIUN TIDAK TERSEDIA';
           this._radioTunerSlider?.setAttribute(
             'aria-valuetext',
-            'Station unavailable after directory refresh',
+            'Stasiun tidak tersedia setelah penyegaran direktori',
           );
         }
       }
@@ -5849,7 +5868,7 @@ export class StyleManager {
       const radioExpanded = Boolean(this._radioPanel && !this._radioPanel.classList.contains('collapsed'));
       this._contextRadioToggleBtn.setAttribute('aria-controls', 'radio-panel');
       this._contextRadioToggleBtn.setAttribute('aria-expanded', String(radioExpanded));
-      const label = radioExpanded ? 'Go to expanded Radio section' : 'Expand Radio section in Context';
+      const label = radioExpanded ? 'Buka bagian Radio yang diperluas' : 'Buka bagian Radio di Konteks';
       this._contextRadioToggleBtn.setAttribute('aria-label', label);
       this._contextRadioToggleBtn.title = label;
       return;
@@ -5900,10 +5919,10 @@ export class StyleManager {
       this._radioEnableBtn.setAttribute('aria-pressed', String(enabled));
       this._radioEnableBtn.textContent = transitioning
         ? lifecycleState.toUpperCase()
-        : (uncertain ? 'RECONCILE' : (enabled ? 'DISABLE' : 'ENABLE'));
+        : (uncertain ? 'SELARASKAN' : (enabled ? 'MATIKAN' : 'AKTIFKAN'));
       this._radioEnableBtn.setAttribute(
         'aria-label',
-        uncertain ? 'Reconcile Radio — lifecycle uncertain' : `${enabled ? 'Disable' : 'Enable'} Radio`,
+        uncertain ? 'Selaraskan Radio — status siklus tidak pasti' : `${enabled ? 'Matikan' : 'Aktifkan'} Radio`,
       );
       this._radioEnableBtn.disabled = transitioning;
     }
@@ -5912,10 +5931,10 @@ export class StyleManager {
       this._contextRadioMiniEnableBtn.setAttribute('aria-pressed', String(enabled));
       this._contextRadioMiniEnableBtn.textContent = transitioning
         ? lifecycleState.toUpperCase()
-        : (uncertain ? 'RECONCILE' : (enabled ? 'DISABLE' : 'ENABLE'));
+        : (uncertain ? 'SELARASKAN' : (enabled ? 'MATIKAN' : 'AKTIFKAN'));
       this._contextRadioMiniEnableBtn.setAttribute(
         'aria-label',
-        uncertain ? 'Reconcile Radio — lifecycle uncertain' : `${enabled ? 'Disable' : 'Enable'} Radio`,
+        uncertain ? 'Selaraskan Radio — status siklus tidak pasti' : `${enabled ? 'Matikan' : 'Aktifkan'} Radio`,
       );
       this._contextRadioMiniEnableBtn.disabled = transitioning;
     }
@@ -5979,17 +5998,17 @@ export class StyleManager {
       this._radioTunerSelectedId = null;
     }
 
-    if (this._radioStationName) this._radioStationName.textContent = selected?.name || 'NO STATION SELECTED';
+    if (this._radioStationName) this._radioStationName.textContent = selected?.name || 'BELUM ADA STASIUN DIPILIH';
     if (this._radioStationMeta) {
       const place = selected ? [selected.state, selected.countryCode].filter(Boolean).join(' · ') : '';
       const signal = selected ? [selected.codec, selected.bitrate ? `${selected.bitrate} kbps` : ''].filter(Boolean).join(' · ') : '';
       this._radioStationMeta.textContent = selected
-        ? [place, signal].filter(Boolean).join('  /  ') || 'Directory metadata only'
-        : (state.loading ? 'Loading station directory…' : 'Choose a globe marker or use next.');
+        ? [place, signal].filter(Boolean).join('  /  ') || 'Hanya metadata direktori'
+        : (state.loading ? 'Memuat direktori stasiun…' : 'Pilih penanda globe atau gunakan berikutnya.');
     }
     if (this._radioStationTags) {
       const tags = Array.isArray(selected?.tags) ? selected.tags.slice(0, 8) : [];
-      this._radioStationTags.textContent = tags.length ? `TAGS · ${tags.join(' · ')}` : '';
+      this._radioStationTags.textContent = tags.length ? `TAG · ${tags.join(' · ')}` : '';
     }
     if (this._radioStationHomepage) {
       const homepage = selected?.homepage || '';
@@ -6005,18 +6024,18 @@ export class StyleManager {
     if (this._cockpitRadioPrevBtn) this._cockpitRadioPrevBtn.disabled = !interactive || !hasStations;
     if (this._cockpitRadioNextBtn) this._cockpitRadioNextBtn.disabled = !interactive || !hasStations;
     if (this._radioPlayBtn) {
-      const action = activePlayback ? 'Pause' : (state.audioState === 'paused' ? 'Resume' : 'Play');
+      const action = activePlayback ? 'Jeda' : (state.audioState === 'paused' ? 'Lanjutkan' : 'Putar');
       this._radioPlayBtn.disabled = !interactive || !hasStations;
       this._radioPlayBtn.classList.toggle('active', activePlayback);
       this._radioPlayBtn.textContent = action.toUpperCase();
-      this._radioPlayBtn.setAttribute('aria-label', `${action} ${selected ? 'selected' : 'nearest'} radio station`);
+      this._radioPlayBtn.setAttribute('aria-label', `${action} stasiun radio ${selected ? 'terpilih' : 'terdekat'}`);
     }
     if (this._contextRadioMiniPlayBtn) {
-      const action = activePlayback ? 'Pause' : (state.audioState === 'paused' ? 'Resume' : 'Play');
+      const action = activePlayback ? 'Jeda' : (state.audioState === 'paused' ? 'Lanjutkan' : 'Putar');
       this._contextRadioMiniPlayBtn.disabled = !interactive || !hasStations;
       this._contextRadioMiniPlayBtn.classList.toggle('active', activePlayback);
       this._contextRadioMiniPlayBtn.textContent = activePlayback ? 'Ⅱ' : '▶';
-      this._contextRadioMiniPlayBtn.setAttribute('aria-label', `${action} ${selected ? 'selected' : 'nearest'} radio station`);
+      this._contextRadioMiniPlayBtn.setAttribute('aria-label', `${action} stasiun radio ${selected ? 'terpilih' : 'terdekat'}`);
       this._contextRadioMiniPlayBtn.title = action;
     }
     if (this._cockpitRadioPlayBtn) {
@@ -6049,8 +6068,8 @@ export class StyleManager {
     }
     if (this._contextRadioMiniStation) {
       this._contextRadioMiniStation.textContent = uncertain
-        ? 'RADIO STATE UNCERTAIN'
-        : (selected?.name || (state.loading ? 'SYNCING DIRECTORY' : 'RADIO READY'));
+        ? 'STATUS RADIO TIDAK PASTI'
+        : (selected?.name || (state.loading ? 'MENYINKRONKAN DIREKTORI' : 'RADIO SIAP'));
     }
     if (this._cockpitRadioStation) {
       this._cockpitRadioStation.textContent = uncertain
@@ -6059,35 +6078,35 @@ export class StyleManager {
     }
     if (this._radioPlaybackState) {
       const catalogSuffix = state.degraded
-        ? (state.stale ? ' · stale/degraded directory' : ' · degraded directory')
-        : (state.stale ? ' · stale directory' : '');
-      const outsideFilter = selected && state.selectedIndex < 0 ? ' · outside current filter' : '';
+        ? (state.stale ? ' · direktori usang/terdegradasi' : ' · direktori terdegradasi')
+        : (state.stale ? ' · direktori usang' : '');
+      const outsideFilter = selected && state.selectedIndex < 0 ? ' · di luar filter saat ini' : '';
       const messages = {
-        stopped: enabled ? 'Ready — playback starts only from your action' : 'Radio off',
-        loading: 'Connecting directly to broadcaster…',
-        buffering: 'Buffering broadcaster stream…',
-        playing: `Playing ${selected?.name || 'station'}`,
-        paused: `Paused ${selected?.name || 'station'}`,
-        error: state.audioError || 'Broadcaster stream unavailable',
+        stopped: enabled ? 'Siap — pemutaran hanya dimulai dari tindakan Anda' : 'Radio mati',
+        loading: 'Menghubungkan langsung ke penyiar…',
+        buffering: 'Menyangga aliran penyiar…',
+        playing: `Memutar ${selected?.name || 'stasiun'}`,
+        paused: `Dijeda ${selected?.name || 'stasiun'}`,
+        error: state.audioError || 'Aliran penyiar tidak tersedia',
       };
       const voiceSuffix = state.voiceDucked
-        ? ' · muted during voice interaction'
-        : (state.voiceRestoring ? ' · restoring volume after voice' : '');
+        ? ' · dibisukan selama interaksi suara'
+        : (state.voiceRestoring ? ' · memulihkan volume setelah suara' : '');
       const tuningSuffix = state.tuningAwaitingStationId
         ? (state.audioState === 'error'
-          ? ' · static indicates no broadcaster audio'
-          : ' · tuning static until broadcaster starts')
+          ? ' · statis menandakan tidak ada audio penyiar'
+          : ' · statis penyetelan hingga penyiar mulai')
         : '';
       const unavailable = state.tuningUnavailableStationId
-        ? 'Station unavailable after directory refresh — choose another channel'
+        ? 'Stasiun tidak tersedia setelah penyegaran direktori — pilih saluran lain'
         : null;
       const lifecycleMessage = transitioning
-        ? (lifecycleState === 'enabling' ? 'Radio is enabling…' : 'Radio is disabling…')
+        ? (lifecycleState === 'enabling' ? 'Radio sedang diaktifkan…' : 'Radio sedang dimatikan…')
         : null;
       const uncertainMessage = uncertain
-        ? 'Radio lifecycle is uncertain — use Enable or Disable to reconcile'
+        ? 'Status radio tidak pasti — gunakan Aktifkan atau Matikan untuk menyelaraskan'
         : null;
-      this._radioPlaybackState.textContent = `${uncertainMessage || unavailable || lifecycleMessage || state.error || messages[state.audioState] || 'Ready'}${tuningSuffix}${voiceSuffix}${catalogSuffix}${outsideFilter}`;
+      this._radioPlaybackState.textContent = `${uncertainMessage || unavailable || lifecycleMessage || state.error || messages[state.audioState] || 'Siap'}${tuningSuffix}${voiceSuffix}${catalogSuffix}${outsideFilter}`;
       this._radioPlaybackState.classList.toggle('error', Boolean(uncertainMessage || unavailable || state.error || state.audioState === 'error'));
     }
     if (
@@ -6215,7 +6234,7 @@ export class StyleManager {
         selectedCameraId: cameraId,
         calibration: { cameraId, save: true },
       }, { origin: 'user' });
-      this._showToast('CCTV calibration saved');
+      this._showToast('Kalibrasi CCTV disimpan');
     });
 
     this._cctvCalibResetBtn?.addEventListener('click', () => {
@@ -6250,6 +6269,72 @@ export class StyleManager {
       this._cctvFrame.dataset.error = '';
     }
     this._cctvFrameWrap?.classList.remove('loading', 'has-frame');
+  }
+
+  /**
+   * Plays the active HLS camera in the panel preview. HLS cameras have no
+   * snapshot endpoint (/api/cctv/frame would only return the synthetic
+   * fallback and mark health degraded), so the preview binds the same proxied
+   * playlist the monitor plane consumes. Passing null tears the stream down
+   * and hands the box back to the <img> snapshot path.
+   * @param {object|null} camera - Active camera payload, or null.
+   * @returns {void}
+   */
+  _syncCctvStream(camera) {
+    const video = this._cctvVideo;
+    const wrap = this._cctvFrameWrap;
+    if (!video || !wrap) return;
+    const src = camera ? String(camera.mediaUrl || '').split('?')[0] : '';
+    if (!src) {
+      this._clearCctvStream();
+      return;
+    }
+    wrap.classList.add('video-mode');
+    if (src === this._cctvVideoSrc) return;
+
+    this._clearCctvStream();
+    wrap.classList.add('video-mode');
+    this._cctvVideoSrc = src;
+    const token = ++this._cctvVideoRequestToken;
+    if (this._cctvFrame) {
+      this._cctvFrame.dataset.loading = 'true';
+      this._cctvFrame.dataset.error = '';
+    }
+    wrap.classList.toggle('loading', !wrap.classList.contains('has-frame'));
+    void attachHlsToVideo(video, src).then((hls) => {
+      if (token !== this._cctvVideoRequestToken) {
+        hls?.destroy();
+        return;
+      }
+      if (hls) this._cctvHls = hls;
+      video.play?.().catch(() => {});
+    });
+  }
+
+  /**
+   * Stops the panel HLS preview and clears its element. Leaves the snapshot
+   * <img> untouched so the image-feed path keeps its last settled frame.
+   * @returns {void}
+   */
+  _clearCctvStream() {
+    const video = this._cctvVideo;
+    const idle = !this._cctvHls
+      && !this._cctvVideoSrc
+      && !this._cctvFrameWrap?.classList.contains('video-mode');
+    if (idle) return;
+    this._cctvVideoRequestToken += 1;
+    if (this._cctvHls) {
+      this._cctvHls.destroy();
+      this._cctvHls = null;
+    }
+    this._cctvVideoSrc = '';
+    if (video) {
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+      video.classList.remove('active');
+    }
+    this._cctvFrameWrap?.classList.remove('video-mode');
   }
 
   /**
@@ -6342,18 +6427,18 @@ export class StyleManager {
   _syncCctvSourceBadge(activeCamera, enabled) {
     if (!this._cctvSourceBadge) return;
     if (!enabled || !activeCamera) {
-      this._cctvSourceBadge.textContent = 'SOURCE · UNKNOWN';
+      this._cctvSourceBadge.textContent = 'SUMBER · TIDAK DIKETAHUI';
       this._cctvSourceBadge.dataset.frameState = 'idle';
       return;
     }
     const hasDisplayedFrame = this._cctvFrameWrap?.classList.contains('has-frame');
     if (this._cctvFrame?.dataset.loading === 'true' && !hasDisplayedFrame) {
-      this._cctvSourceBadge.textContent = 'FRAME · LOADING';
+      this._cctvSourceBadge.textContent = 'BINGKAI · MEMUAT';
       this._cctvSourceBadge.dataset.frameState = 'loading';
       return;
     }
     if (this._cctvFrame?.dataset.error === 'true' && !hasDisplayedFrame) {
-      this._cctvSourceBadge.textContent = 'FRAME · UNAVAILABLE';
+      this._cctvSourceBadge.textContent = 'BINGKAI · TIDAK TERSEDIA';
       this._cctvSourceBadge.dataset.frameState = 'error';
       return;
     }
@@ -6377,7 +6462,7 @@ export class StyleManager {
         reset: true,
       },
     }, { origin: 'user' });
-    this._showToast('CCTV calibration reset');
+    this._showToast('Kalibrasi CCTV diatur ulang');
   }
 
   /**
@@ -6441,7 +6526,7 @@ export class StyleManager {
     if (this._cctvAdjustBtn) {
       const adjustOn = !!this._cctvState?.calibrationMode;
       this._cctvAdjustBtn.classList.toggle('active', adjustOn && canCalibrate);
-      this._cctvAdjustBtn.textContent = adjustOn ? 'ADJUST ON' : 'ADJUST';
+      this._cctvAdjustBtn.textContent = adjustOn ? 'SESUAIKAN AKTIF' : 'SESUAIKAN';
       this._cctvAdjustBtn.disabled = !canCalibrate;
     }
     if (this._cctvCalReadout) {
@@ -6469,7 +6554,7 @@ export class StyleManager {
    */
   async _toggleCctvEnabled(forceState) {
     if (!this._dataManager || !this._dataManager.layers?.has('cctv')) {
-      this._showToast('CCTV layer unavailable');
+      this._showToast('Lapisan CCTV tidak tersedia');
       return false;
     }
     const enabled = this._dataManager.isEnabled('cctv');
@@ -6501,9 +6586,9 @@ export class StyleManager {
    */
   _calBadgeLabel(badge) {
     switch (badge) {
-      case 'calibrated': return 'CALIBRATED';
-      case 'curated': return 'CURATED';
-      case 'raw-prior': return 'RAW PRIOR';
+      case 'calibrated': return 'TERKALIBRASI';
+      case 'curated': return 'TERKURASI';
+      case 'raw-prior': return 'PRIOR MENTAH';
       default: return '--';
     }
   }
@@ -6543,7 +6628,7 @@ export class StyleManager {
 
     if (this._cctvEnableBtn) {
       this._cctvEnableBtn.classList.toggle('active', enabled);
-      this._cctvEnableBtn.textContent = enabled ? 'CCTV ON' : 'CCTV OFF';
+      this._cctvEnableBtn.textContent = enabled ? 'CCTV AKTIF' : 'CCTV MATI';
     }
 
     if (this._cctvSelect) {
@@ -6580,22 +6665,22 @@ export class StyleManager {
       const mode = state?.coverageMode || (state?.showCoverage ? 'on' : 'off');
       this._cctvCoverageBtn.classList.toggle('active', mode !== 'off');
       this._cctvCoverageBtn.textContent = mode === 'viewshed'
-        ? 'VIEWSHED ON'
-        : mode === 'on' ? 'COVERAGE ON' : 'COVERAGE OFF';
+        ? 'VIEWSHED AKTIF'
+        : mode === 'on' ? 'CAKUPAN AKTIF' : 'CAKUPAN MATI';
       this._cctvCoverageBtn.disabled = !enabled;
     }
 
     if (this._cctvAutoHopBtn) {
       const autoHop = !!state?.autoHop;
       this._cctvAutoHopBtn.classList.toggle('active', autoHop);
-      this._cctvAutoHopBtn.textContent = autoHop ? 'AUTO HOP ON' : 'AUTO HOP OFF';
+      this._cctvAutoHopBtn.textContent = autoHop ? 'HOP OTOMATIS AKTIF' : 'HOP OTOMATIS MATI';
       this._cctvAutoHopBtn.disabled = !enabled;
     }
 
     if (this._cctvProjectionBtn) {
       const showProjection = state?.showProjection !== false;
       this._cctvProjectionBtn.classList.toggle('active', showProjection);
-      this._cctvProjectionBtn.textContent = showProjection ? 'PROJECTION ON' : 'PROJECTION OFF';
+      this._cctvProjectionBtn.textContent = showProjection ? 'PROYEKSI AKTIF' : 'PROYEKSI MATI';
       this._cctvProjectionBtn.disabled = !enabled;
     }
 
@@ -6610,7 +6695,7 @@ export class StyleManager {
       const badge = activeCamera?.calBadge || null;
       const dirty = !!activeCamera?.calDirty;
       this._cctvQualityChip.textContent = dirty
-        ? 'CAL · EDITED (UNSAVED)'
+        ? 'CAL · DIUBAH (BELUM DISIMPAN)'
         : `CAL · ${this._calBadgeLabel(badge)}`;
       this._cctvQualityChip.dataset.calBadge = dirty ? 'edited' : (badge || '');
     }
@@ -6619,22 +6704,25 @@ export class StyleManager {
 
     if (this._cctvMeta) {
       if (activeCamera) {
-        const provider = activeCamera.sourceLabel || activeCamera.provider || 'Configured Source';
+        const provider = activeCamera.sourceLabel || activeCamera.provider || 'Sumber Terkonfigurasi';
         const statusMsg = activeCamera.sourceMessage ? ` · ${activeCamera.sourceMessage}` : '';
         const calBadge = activeCamera.calBadge ? this._calBadgeLabel(activeCamera.calBadge) : '';
-        const projLabel = state?.showProjection !== false ? 'MONITOR' : 'OFF';
+        const projLabel = state?.showProjection !== false ? 'MONITOR' : 'MATI';
         this._cctvMeta.textContent = `${activeCamera.city} · HDG ${Math.round(activeCamera.headingDeg)}° · FOV ${Math.round(activeCamera.fovDeg)}° · RANGE ${Math.round(activeCamera.rangeM)}m · ${projLabel}${calBadge ? ` · ${calBadge}` : ''} · ${provider}${statusMsg}`;
       } else if (cameras.length > 0) {
         this._cctvMeta.textContent = enabled
-          ? `${cameras.length} cameras loaded · click a camera to activate`
-          : `${cameras.length} cameras loaded · enable CCTV to activate`;
+          ? `${cameras.length} kamera dimuat · klik kamera untuk mengaktifkan`
+          : `${cameras.length} kamera dimuat · aktifkan CCTV untuk mengaktifkan`;
       } else {
-        this._cctvMeta.textContent = 'Enable CCTV to load camera intersections';
+        this._cctvMeta.textContent = 'Aktifkan CCTV untuk memuat persimpangan kamera';
       }
     }
 
+    const isHlsCamera = enabled
+      && String(activeCamera?.feedType || '').toLowerCase() === 'hls';
+    this._syncCctvStream(isHlsCamera ? activeCamera : null);
     if (this._cctvFrame) {
-      const nextSrc = enabled ? activeCamera?.frameUrl : null;
+      const nextSrc = enabled && !isHlsCamera ? activeCamera?.frameUrl : null;
       const nextCameraId = enabled ? (activeCamera?.id || '') : '';
       const cameraChanged = this._cctvFrame.dataset.cameraId !== nextCameraId;
       const frameLoading = this._cctvFrame.dataset.loading === 'true';
@@ -6645,13 +6733,13 @@ export class StyleManager {
       if (nextSrc && (cameraChanged || (!frameLoading && this._cctvFrame.dataset.currentSrc !== nextSrc))) {
         this._queueCctvFrame(nextSrc, nextCameraId, cameraChanged);
       }
-      if (!nextSrc) {
+      if (!nextSrc && !isHlsCamera) {
         this._clearCctvFrame();
       }
     }
 
     this._syncCctvSourceBadge(activeCamera, enabled);
-    this._typeCctvSummary(state?.summary || 'Enable CCTV to start camera-linked intelligence summaries.');
+    this._typeCctvSummary(state?.summary || 'Aktifkan CCTV untuk memulai ringkasan intelijen terkait kamera.');
   }
 
   /**
@@ -7422,19 +7510,18 @@ export class StyleManager {
       }
       btn.setAttribute('aria-expanded', String(!collapsed));
       const panelName = panelEl.querySelector('.panel-title, .pp-header-label')?.textContent?.trim() || 'panel';
-      const action = collapsed ? 'Expand' : 'Collapse';
+      const action = collapsed ? 'Buka' : 'Ciutkan';
       btn.title = `${action} ${panelName}`;
       btn.setAttribute('aria-label', `${action} ${panelName}`);
       if (panelEl.id === 'radio-panel') {
-        const action = collapsed ? 'Expand' : 'Collapse';
         btn.title = `${action} Radio`;
-        btn.setAttribute('aria-label', `${action} Radio section`);
+        btn.setAttribute('aria-label', `${action} bagian Radio`);
       }
     });
     const dockToggle = panelEl.querySelector(`[data-dock-toggle-target="${panelEl.id}"]`);
     if (dockToggle) {
       const panelName = panelEl.querySelector('.panel-title')?.textContent?.trim() || 'panel';
-      const action = collapsed ? 'Expand' : 'Collapse';
+      const action = collapsed ? 'Buka' : 'Ciutkan';
       dockToggle.setAttribute('aria-expanded', String(!collapsed));
       dockToggle.setAttribute('aria-label', `${action} ${panelName}`);
       dockToggle.title = `${action} ${panelName}`;
@@ -9331,12 +9418,12 @@ export class StyleManager {
             this._collapsePOIRow();
             this._updateLocationMiniStatus();
           } else {
-            this._showToast('Location not found');
+            this._showToast('Lokasi tidak ditemukan');
           }
         } catch (err) {
           console.error('[Search] Geocoding failed:', err);
           if (this._disposed || generation !== this._navigationGeneration) return;
-          this._showToast('Search failed');
+          this._showToast('Pencarian gagal');
         } finally {
           this._settleLocationSearchUi(generation);
         }
@@ -9588,7 +9675,7 @@ export class StyleManager {
    */
   _toggleOrbit() {
     if (!this._currentTarget) {
-      this._showToast('Fly to a POI first');
+      this._showToast('Terbang ke POI terlebih dahulu');
       return;
     }
 
@@ -9662,16 +9749,16 @@ export class StyleManager {
     this._clearSelectedLayersManagerPromise = managerOperation;
     const operation = managerOperation.then((result) => {
       if (result.targetIds.length === 0) {
-        this._showToast('No selected data layers');
+        this._showToast('Tidak ada lapisan data terpilih');
       } else if (result.notClearedIds.length > 0) {
-        this._showToast(`${result.notClearedIds.length} data layer${result.notClearedIds.length === 1 ? '' : 's'} could not be cleared`);
+        this._showToast(`${result.notClearedIds.length} lapisan data tidak dapat dimatikan`);
       } else {
-        this._showToast(`Cleared ${result.clearedIds.length} data layer${result.clearedIds.length === 1 ? '' : 's'}`);
+        this._showToast(`${result.clearedIds.length} lapisan data dimatikan`);
       }
       return result;
     }).catch((error) => {
       console.warn('[Data] clear selected layers failed', error);
-      this._showToast('Selected data layers could not be cleared');
+      this._showToast('Lapisan data terpilih tidak dapat dimatikan');
       return {
         targetIds: [],
         items: [],
@@ -9772,7 +9859,7 @@ export class StyleManager {
   _initShareButton() {
     this._shareBtn.addEventListener('click', async () => {
       const success = await this.shareLinkManager.copyLink();
-      this._showToast(success ? 'Link copied!' : 'Copy failed');
+      this._showToast(success ? 'Tautan disalin!' : 'Gagal menyalin');
     });
   }
 

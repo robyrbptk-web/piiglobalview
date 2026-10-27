@@ -582,13 +582,26 @@ test('the tray only spans the credit corner at the widths the model covers', () 
   assert.equal(parseMediaCondition(widened[0].media[0]), 900);
 });
 
-test('the credit line is never suppressed to make room', () => {
+test('the credit chrome is hidden by exactly one owner-directive flip', () => {
+  // Owner directive 2026-10-27 (PII Global View rebrand): no third-party logo
+  // and no "Powered by" text on the globe. The flip is deliberately narrow —
+  // ONE `display: none` on the base rule — so re-enabling attribution for a
+  // public deployment is one property, not a CSS archaeology project.
+  const creditBase = RULES.find((rule) => rule.parts.length === 1 && rule.parts[0] === '#cesium-credits');
+  assert.ok(creditBase, '#cesium-credits base rule is missing');
+  const displays = creditBase.decls.filter((decl) => decl.prop === 'display');
+  assert.equal(displays.length, 1, 'exactly one display declaration on the credit box');
+  assert.equal(displays[0].value, 'none');
+  assert.equal(displays[0].important, true, 'the hide must outrank Cesium\'s own inline styles');
+
+  // Nothing else may suppress it: a second hidden-by-opaque layer, an
+  // off-screen move or a faded credit would leave a deployment that LOOKS
+  // compliant while a future flip re-creates the old bug.
   const creditBlocks = [...css.matchAll(/#cesium-credits[^{]*\{([^}]*)\}/g)].map((m) => m[1]);
   assert.ok(creditBlocks.length > 0);
   for (const block of creditBlocks) {
-    assert.doesNotMatch(block, /display\s*:\s*none/, 'the credit must never be display:none');
-    assert.doesNotMatch(block, /visibility\s*:\s*hidden/, 'the credit must never be hidden');
-    assert.doesNotMatch(block, /opacity\s*:\s*0(\D|$)/, 'the credit must never be faded out');
+    assert.doesNotMatch(block, /visibility\s*:\s*hidden/, 'the credit must not be hidden a second way');
+    assert.doesNotMatch(block, /opacity\s*:\s*0(\D|$)/, 'the credit must not be faded out');
   }
   assert.match(css, /body\.ui-clean-view #cesium-credits,\s*\n\s*body\.recording-mode #cesium-credits \{[^}]*bottom: 36px;/);
 });
