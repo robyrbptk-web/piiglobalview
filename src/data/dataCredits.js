@@ -128,6 +128,24 @@ export const DATA_CREDITS = [
       'Contains OS data © Crown copyright and database rights.',
   },
   {
+    key: 'bandung-cctv',
+    html:
+      'CCTV cameras &amp; HLS streams (Kota Bandung): ' +
+      '<a href="https://pelindung.bandung.go.id/" target="_blank" rel="noopener">PELINDUNG — Diskominfo Kota Bandung</a>',
+  },
+  {
+    key: 'tasikmalaya-cctv',
+    html:
+      'CCTV cameras &amp; HLS streams (Kota Tasikmalaya): ' +
+      '<a href="https://atcs.tasikmalayakota.go.id/" target="_blank" rel="noopener">ATCS Kota Tasikmalaya</a>',
+  },
+  {
+    key: 'bandungkab-cctv',
+    html:
+      'CCTV cameras &amp; HLS streams (Kabupaten Bandung): ' +
+      '<a href="https://dishub.bandungkab.go.id/cctv/" target="_blank" rel="noopener">Dishub Kabupaten Bandung</a>',
+  },
+  {
     key: 'gbfs',
     html: 'Bikeshare availability: GBFS operator feeds (e.g. Austin BCycle)',
   },
@@ -137,6 +155,33 @@ export const DATA_CREDITS = [
       'Internet-radio station directory: ' +
       '<a href="https://www.radio-browser.info/" target="_blank" rel="noopener">Radio Browser</a> ' +
       '(public domain; audio delivered directly by each broadcaster)',
+  },
+  {
+    key: 'sekolah',
+    html:
+      'Indonesian schools (national sample): ' +
+      '<a href="https://sekolah.devapi.id" target="_blank" rel="noopener">api-sekolah — sekolah.devapi.id</a> ' +
+      '(ikhsan-rfl; public keyless API)',
+  },
+  {
+    key: 'api-indonesia-hospitals',
+    html:
+      'Rumah sakit nasional: ' +
+      '<a href="https://apiindonesia.id" target="_blank" rel="noopener">API Indonesia</a> ' +
+      '(registry KEMENTRIAN KESEHATAN via use.apiindonesia.id)',
+  },
+  {
+    key: 'api-indonesia-transjakarta',
+    html:
+      'Halte Transjakarta: <a href="https://apiindonesia.id" target="_blank" rel="noopener">API Indonesia</a> ' +
+      'from PT Transportasi Jakarta GTFS (CC BY 4.0)',
+  },
+  {
+    key: 'indonesia-volcanoes',
+    html:
+      'Indonesian volcano catalog: ' +
+      '<a href="https://indonesia-public-static-api.vercel.app" target="_blank" rel="noopener">Indonesia Public Static API</a> ' +
+      '(MIT)',
   },
   {
     key: 'reearth-terrain',

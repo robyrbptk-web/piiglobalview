@@ -1304,6 +1304,449 @@ export function createRadioProxyMiddleware({ fetchImpl = null, lookupImpl = look
   };
 }
 
+// ---------------------------------------------------------------------------
+// Indonesian public-data proxies (schools + volcanoes)
+// ---------------------------------------------------------------------------
+const SEKOLAH_UPSTREAM = 'https://sekolah.devapi.id/sekolah';
+/**
+ * Province codes (Kemendagri) used for the national stratified sample.
+ *
+ * api-sekolah ignores `page` and forces `limit=10` whenever `kode_wilayah` is
+ * present, and a global `limit=100` query only reaches 3–6 provinces. A
+ * 10-row query per province is therefore the only way to get nationwide
+ * coverage: 38 calls, merged and de-duplicated by NPSN.
+ */
+const SEKOLAH_PROVINCE_CODES = Object.freeze([
+  '11', '12', '13', '14', '15', '16', '17', '18', '19', '21',
+  '31', '32', '33', '34', '35', '36',
+  '51', '52', '53',
+  '61', '62', '63', '64', '65',
+  '71', '72', '73', '74', '75', '76',
+  '81', '82',
+  '91', '92', '93', '94', '95', '96',
+]);
+const SEKOLAH_SAMPLE_TTL_MS = 24 * 3600_000;
+const SEKOLAH_FANOUT_CONCURRENCY = 3;
+/** Gap between province queries; the upstream publishes a 60 req/min budget. */
+const SEKOLAH_FANOUT_GAP_MS = 150;
+const VOLCANO_UPSTREAM = 'https://indonesia-public-static-api.vercel.app/api/volcanoes';
+const VOLCANO_TTL_MS = 7 * 24 * 3600_000;
+const INDONESIAN_DATA_CACHE_DIR = path.join(process.cwd(), '.gev-cache');
+
+const sleepMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Proxy for Indonesian public datasets:
+ *  - `/api/sekolah`  → api-sekolah national sample (GitHub: ikhsan-rfl/api-sekolah)
+ *  - `/api/volcanoes` → indonesia-public-static-api volcano catalog (MIT)
+ *
+ * Both use a memory + disk cache (`.gev-cache/`) with stale-serve on upstream
+ * failure and in-flight coalescing, so a reload or an open tab can never fan
+ * out duplicate upstream traffic.
+ *
+ * @returns {import('vite').Plugin}
+ */
+function indonesianDataProxy() {
+  const sekolahCachePath = path.join(INDONESIAN_DATA_CACHE_DIR, 'sekolah-national.json');
+  const volcanoCachePath = path.join(INDONESIAN_DATA_CACHE_DIR, 'volcanoes.json');
+  /** @type {{at:number, body:string}|null} */
+  let sekolahMem = null;
+  /** @type {Promise<{at:number, body:string}>|null} */
+  let sekolahInflight = null;
+  /** @type {{at:number, body:string}|null} */
+  let volcanoMem = null;
+  /** @type {Promise<{at:number, body:string}>|null} */
+  let volcanoInflight = null;
+
+  async function readDisk(cachePath) {
+    try {
+      const parsed = JSON.parse(await fsp.readFile(cachePath, 'utf8'));
+      if (Number.isFinite(parsed?.at) && typeof parsed?.body === 'string') return parsed;
+    } catch { /* first run or invalid cache */ }
+    return null;
+  }
+
+  async function writeDisk(cachePath, entry) {
+    try {
+      await fsp.mkdir(INDONESIAN_DATA_CACHE_DIR, { recursive: true });
+      await fsp.writeFile(cachePath, JSON.stringify(entry), 'utf8');
+    } catch (error) {
+      console.warn('[indonesian-data-proxy] cache write failed:', error?.message || error);
+    }
+  }
+
+  function sendJson(res, status, body, cacheState) {
+    if (res.headersSent) return;
+    res.writeHead(status, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': status === 200 ? 'public, max-age=3600' : 'no-store',
+      'X-GEV-Cache': cacheState,
+    });
+    res.end(body);
+  }
+
+  async function fetchProvince(kode) {
+    const url = new URL(SEKOLAH_UPSTREAM);
+    url.searchParams.set('kode_wilayah', kode);
+    url.searchParams.set('limit', '10');
+    const upstream = await fetch(url, {
+      signal: AbortSignal.timeout(25000),
+      headers: { Accept: 'application/json' },
+    });
+    if (!upstream.ok) throw new Error(`HTTP ${upstream.status}`);
+    const parsed = await upstream.json();
+    if (parsed?.success !== true || !Array.isArray(parsed.data)) {
+      throw new Error('malformed response');
+    }
+    return parsed.data;
+  }
+
+  async function collectSekolahSample() {
+    const rows = [];
+    const failures = [];
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < SEKOLAH_PROVINCE_CODES.length) {
+        const kode = SEKOLAH_PROVINCE_CODES[cursor];
+        cursor += 1;
+        try {
+          rows.push(...await fetchProvince(kode));
+        } catch {
+          // One retry: a burst 429 or transient 5xx must not drop a province.
+          await sleepMs(1200);
+          try {
+            rows.push(...await fetchProvince(kode));
+          } catch {
+            failures.push(kode);
+          }
+        }
+        await sleepMs(SEKOLAH_FANOUT_GAP_MS);
+      }
+    };
+    await Promise.all(Array.from({ length: SEKOLAH_FANOUT_CONCURRENCY }, worker));
+    if (rows.length === 0) throw new Error('all province queries failed');
+    const seen = new Set();
+    const data = rows.filter((row) => {
+      const npsn = String(row?.npsn || '').trim();
+      if (!npsn || seen.has(npsn)) return false;
+      seen.add(npsn);
+      return true;
+    });
+    return {
+      success: true,
+      data,
+      meta: {
+        sampled: true,
+        provincesQueried: SEKOLAH_PROVINCE_CODES.length,
+        provincesFailed: failures,
+        limitPerProvince: 10,
+        fetchedAt: Date.now(),
+      },
+    };
+  }
+
+  async function loadSekolahSample() {
+    const now = Date.now();
+    if (sekolahMem && now - sekolahMem.at < SEKOLAH_SAMPLE_TTL_MS) {
+      return { entry: sekolahMem, cacheState: 'hit' };
+    }
+    if (!sekolahMem) sekolahMem = await readDisk(sekolahCachePath);
+    if (sekolahMem && now - sekolahMem.at < SEKOLAH_SAMPLE_TTL_MS) {
+      return { entry: sekolahMem, cacheState: 'disk' };
+    }
+    if (sekolahInflight) {
+      return { entry: await sekolahInflight, cacheState: 'coalesced' };
+    }
+    sekolahInflight = (async () => {
+      try {
+        const payload = await collectSekolahSample();
+        const entry = { at: Date.now(), body: JSON.stringify(payload) };
+        await writeDisk(sekolahCachePath, entry);
+        sekolahMem = entry;
+        return entry;
+      } finally {
+        sekolahInflight = null;
+      }
+    })();
+    try {
+      return { entry: await sekolahInflight, cacheState: 'miss' };
+    } catch (error) {
+      if (sekolahMem) {
+        console.warn('[indonesian-data-proxy] sekolah upstream failed, serving stale:', error?.message || error);
+        return { entry: sekolahMem, cacheState: 'stale' };
+      }
+      throw error;
+    }
+  }
+
+  async function loadVolcanoes() {
+    const now = Date.now();
+    if (volcanoMem && now - volcanoMem.at < VOLCANO_TTL_MS) {
+      return { entry: volcanoMem, cacheState: 'hit' };
+    }
+    if (!volcanoMem) volcanoMem = await readDisk(volcanoCachePath);
+    if (volcanoMem && now - volcanoMem.at < VOLCANO_TTL_MS) {
+      return { entry: volcanoMem, cacheState: 'disk' };
+    }
+    if (volcanoInflight) {
+      return { entry: await volcanoInflight, cacheState: 'coalesced' };
+    }
+    volcanoInflight = (async () => {
+      try {
+        const upstream = await fetch(VOLCANO_UPSTREAM, {
+          signal: AbortSignal.timeout(25000),
+          headers: { Accept: 'application/json' },
+        });
+        if (!upstream.ok) throw new Error(`HTTP ${upstream.status}`);
+        const parsed = await upstream.json();
+        if (!Array.isArray(parsed)) throw new Error('malformed response');
+        const entry = { at: Date.now(), body: JSON.stringify(parsed) };
+        await writeDisk(volcanoCachePath, entry);
+        volcanoMem = entry;
+        return entry;
+      } finally {
+        volcanoInflight = null;
+      }
+    })();
+    try {
+      return { entry: await volcanoInflight, cacheState: 'miss' };
+    } catch (error) {
+      if (volcanoMem) {
+        console.warn('[indonesian-data-proxy] volcano upstream failed, serving stale:', error?.message || error);
+        return { entry: volcanoMem, cacheState: 'stale' };
+      }
+      throw error;
+    }
+  }
+
+  const install = (server) => {
+    server.middlewares.use('/api/sekolah', async (req, res) => {
+      try {
+        const { entry, cacheState } = await loadSekolahSample();
+        sendJson(res, 200, entry.body, cacheState);
+      } catch (error) {
+        console.warn('[indonesian-data-proxy] sekolah unavailable:', error?.message || error);
+        sendJson(res, 502, JSON.stringify({ success: false, error: 'Sekolah API unavailable' }), 'miss');
+      }
+    });
+    server.middlewares.use('/api/volcanoes', async (req, res) => {
+      try {
+        const { entry, cacheState } = await loadVolcanoes();
+        sendJson(res, 200, entry.body, cacheState);
+      } catch (error) {
+        console.warn('[indonesian-data-proxy] volcano unavailable:', error?.message || error);
+        sendJson(res, 502, JSON.stringify({ success: false, error: 'Volcano API unavailable' }), 'miss');
+      }
+    });
+  };
+
+  return {
+    name: 'indonesian-data-proxy',
+    configureServer: install,
+    configurePreviewServer: install,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// API Indonesia (apiindonesia.id) proxy — server-side key brokering
+// ---------------------------------------------------------------------------
+const API_INDONESIA_UPSTREAM = 'https://use.apiindonesia.id';
+
+/**
+ * Bulk datasets are paginated by the upstream (200 rows/page for hospitals,
+ * 100 for Transjakarta), so nationwide coverage needs a few sequential pages.
+ * `maxPages` keeps a cold pull bounded even if `meta.total_pages` is larger.
+ */
+const API_INDONESIA_DATASETS = Object.freeze({
+  hospitals: Object.freeze({
+    path: '/api/v1/rumah-sakit',
+    perPage: 200,
+    maxPages: 5,
+    ttlMs: 24 * 3600_000,
+    cacheFile: 'api-indonesia-hospitals.json',
+  }),
+  transjakarta: Object.freeze({
+    path: '/api/v1/transjakarta/halte',
+    perPage: 100,
+    maxPages: 5,
+    ttlMs: 7 * 24 * 3600_000,
+    cacheFile: 'api-indonesia-transjakarta.json',
+  }),
+});
+
+/**
+ * Proxy for the paid API Indonesia catalogue:
+ *  - `/api/indonesia/hospitals`    → national hospital registry (BMKG-kompatible rows with lat/lng)
+ *  - `/api/indonesia/transjakarta` → Transjakarta bus stop registry
+ *
+ * The `x-api-key` header is added here and the key never reaches the browser.
+ * Same memory + disk cache (`.gev-cache/`) shape as the other Indonesian
+ * proxies: stale-serve on upstream failure and in-flight coalescing.
+ *
+ * @returns {import('vite').Plugin}
+ */
+function apiIndonesiaProxy() {
+  /** @type {Map<string, {at:number, body:string}>} */
+  const memory = new Map();
+  /** @type {Map<string, Promise<{at:number, body:string}>>} */
+  const inflight = new Map();
+  const cacheDir = INDONESIAN_DATA_CACHE_DIR;
+
+  async function readDisk(cacheFile) {
+    try {
+      const parsed = JSON.parse(await fsp.readFile(path.join(cacheDir, cacheFile), 'utf8'));
+      if (Number.isFinite(parsed?.at) && typeof parsed?.body === 'string') return parsed;
+    } catch { /* first run or invalid cache */ }
+    return null;
+  }
+
+  async function writeDisk(cacheFile, entry) {
+    try {
+      await fsp.mkdir(cacheDir, { recursive: true });
+      await fsp.writeFile(path.join(cacheDir, cacheFile), JSON.stringify(entry), 'utf8');
+    } catch (error) {
+      console.warn('[api-indonesia-proxy] cache write failed:', error?.message || error);
+    }
+  }
+
+  function sendJson(res, status, body, cacheState) {
+    if (res.headersSent) return;
+    res.writeHead(status, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': status === 200 ? 'public, max-age=3600' : 'no-store',
+      'X-GEV-Cache': cacheState,
+    });
+    res.end(body);
+  }
+
+  async function fetchPage(dataset, page) {
+    const url = new URL(`${API_INDONESIA_UPSTREAM}${dataset.path}`);
+    url.searchParams.set('page', String(page));
+    url.searchParams.set('per_page', String(dataset.perPage));
+    const upstream = await fetch(url, {
+      signal: AbortSignal.timeout(30000),
+      headers: {
+        Accept: 'application/json',
+        'x-api-key': String(process.env.API_INDONESIA_KEY || '').trim(),
+      },
+    });
+    if (upstream.status === 401 || upstream.status === 403) {
+      throw new Error('INVALID_API_KEY');
+    }
+    if (!upstream.ok) throw new Error(`HTTP ${upstream.status}`);
+    const parsed = await upstream.json();
+    const rows = Array.isArray(parsed?.data)
+      ? parsed.data
+      : Array.isArray(parsed) ? parsed : null;
+    if (!rows) throw new Error('malformed response');
+    return { rows, meta: parsed?.meta || null };
+  }
+
+  async function collect(key) {
+    const dataset = API_INDONESIA_DATASETS[key];
+    const rows = [];
+    let pagesFetched = 0;
+    let totalPages = null;
+    for (let page = 1; page <= dataset.maxPages; page += 1) {
+      const result = await fetchPage(dataset, page);
+      rows.push(...result.rows);
+      pagesFetched = page;
+      if (Number.isFinite(result.meta?.total_pages)) totalPages = result.meta.total_pages;
+      if (result.rows.length < dataset.perPage) break;
+      await sleepMs(250);
+    }
+    if (rows.length === 0) throw new Error('empty dataset');
+    const seen = new Set();
+    const data = rows.filter((row) => {
+      const id = String(row?.id ?? row?.code ?? '').trim();
+      if (!id || seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
+    return {
+      success: true,
+      data,
+      meta: {
+        source: `${API_INDONESIA_UPSTREAM}${dataset.path}`,
+        pagesFetched,
+        perPage: dataset.perPage,
+        truncated: totalPages === null ? pagesFetched === dataset.maxPages : pagesFetched < totalPages,
+        fetchedAt: Date.now(),
+      },
+    };
+  }
+
+  async function load(key) {
+    const dataset = API_INDONESIA_DATASETS[key];
+    const now = Date.now();
+    let mem = memory.get(key) || null;
+    if (mem && now - mem.at < dataset.ttlMs) return { entry: mem, cacheState: 'hit' };
+    if (!mem) {
+      mem = await readDisk(dataset.cacheFile);
+      if (mem) memory.set(key, mem);
+    }
+    if (mem && now - mem.at < dataset.ttlMs) return { entry: mem, cacheState: 'disk' };
+    const pending = inflight.get(key);
+    if (pending) return { entry: await pending, cacheState: 'coalesced' };
+    const task = (async () => {
+      try {
+        const payload = await collect(key);
+        const entry = { at: Date.now(), body: JSON.stringify(payload) };
+        await writeDisk(dataset.cacheFile, entry);
+        memory.set(key, entry);
+        return entry;
+      } finally {
+        inflight.delete(key);
+      }
+    })();
+    inflight.set(key, task);
+    try {
+      return { entry: await task, cacheState: 'miss' };
+    } catch (error) {
+      if (mem) {
+        console.warn(`[api-indonesia-proxy] ${key} upstream failed, serving stale:`, error?.message || error);
+        return { entry: mem, cacheState: 'stale' };
+      }
+      throw error;
+    }
+  }
+
+  const handler = (key) => async (req, res) => {
+    if (!String(process.env.API_INDONESIA_KEY || '').trim()) {
+      sendJson(res, 503, JSON.stringify({
+        success: false,
+        error: 'API_INDONESIA_KEY belum diatur',
+        code: 'MISSING_API_KEY',
+      }), 'miss');
+      return;
+    }
+    try {
+      const { entry, cacheState } = await load(key);
+      sendJson(res, 200, entry.body, cacheState);
+    } catch (error) {
+      const message = String(error?.message || error);
+      console.warn(`[api-indonesia-proxy] ${key} unavailable:`, message);
+      sendJson(res, 502, JSON.stringify({
+        success: false,
+        error: message === 'INVALID_API_KEY'
+          ? 'API_INDONESIA_KEY ditolak upstream'
+          : 'API Indonesia tidak tersedia',
+      }), 'miss');
+    }
+  };
+
+  const install = (server) => {
+    server.middlewares.use('/api/indonesia/hospitals', handler('hospitals'));
+    server.middlewares.use('/api/indonesia/transjakarta', handler('transjakarta'));
+  };
+
+  return {
+    name: 'api-indonesia-proxy',
+    configureServer: install,
+    configurePreviewServer: install,
+  };
+}
+
 function radioBrowserProxy() {
   const middleware = createRadioProxyMiddleware();
   const install = (server) => {
@@ -1576,18 +2019,39 @@ function celestrakProxy() {
     }
   }
 
-  async function fetchUpstream(group) {
+  const USER_AGENT = 'gods-eye-view-celestrak-proxy/1.0 (+https://github.com/bilawalsidhu/gods-eye-view)';
+
+  async function fetchGpTle(group) {
     const url = new URL('https://celestrak.org/NORAD/elements/gp.php');
     url.searchParams.set('GROUP', group);
     url.searchParams.set('FORMAT', 'tle');
-    const res = await fetch(url.toString(), {
+    // CelesTrak 403s bulk groups (e.g. `active`) unless the request carries a
+    // descriptive User-Agent with a contact point.
+    return fetch(url.toString(), {
       signal: AbortSignal.timeout(20000),
-      // CelesTrak 403s bulk groups (e.g. `active`) unless the request carries a
-      // descriptive User-Agent with a contact point.
-      headers: { 'User-Agent': 'gods-eye-view-celestrak-proxy/1.0 (+https://github.com/bilawalsidhu/gods-eye-view)' },
+      headers: { 'User-Agent': USER_AGENT },
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const body = await res.text();
+  }
+
+  async function fetchUpstream(group) {
+    const res = await fetchGpTle(group);
+    // CelesTrak answers 403 (not 304) when the named GP set was already
+    // downloaded from this host within its 2 h refresh window — a cache-
+    // coherence check, not a permanent refusal. With no local cache yet that
+    // would leave the dense group empty on first run, and the supplemental
+    // feed carries the same satellites, so fall back to it.
+    let upstream = res;
+    if (res.status === 403 && /has not updated since/i.test(await res.clone().text().catch(() => ''))) {
+      const supplemental = new URL('https://celestrak.org/NORAD/elements/supplemental/sup-gp.php');
+      supplemental.searchParams.set('FILE', group);
+      supplemental.searchParams.set('FORMAT', 'tle');
+      upstream = await fetch(supplemental.toString(), {
+        signal: AbortSignal.timeout(20000),
+        headers: { 'User-Agent': USER_AGENT },
+      });
+    }
+    if (!upstream.ok) throw new Error(`HTTP ${upstream.status}`);
+    const body = await upstream.text();
     // An upstream error page parses to zero TLEs — treat as failure, keep cache.
     if (!/^1 /m.test(body)) throw new Error('no TLE lines in response');
     return { at: Date.now(), body };
@@ -3522,7 +3986,7 @@ const DEFAULT_AUSTIN_ROWS_URL = 'https://data.austintexas.gov/api/views/b4k4-adk
 /** Default cap on Austin cameras after distance-based prioritization. */
 const DEFAULT_AUSTIN_MAX_SOURCES = 250;
 /** Global cap on total CCTV sources served by the proxy. */
-const DEFAULT_CCTV_MAX_SOURCES = 900;
+const DEFAULT_CCTV_MAX_SOURCES = 1200;
 /** Reference point for Austin camera prioritization (Congress & 6th). */
 const AUSTIN_DOWNTOWN = { lat: 30.2672, lon: -97.7431 };
 /** Caltrans CCTV: one JSON feed per district, identical schema statewide. */
@@ -3543,6 +4007,16 @@ const TFL_JAMCAM_URL = 'https://api.tfl.gov.uk/Place/Type/JamCam';
 const TFL_IMAGE_ORIGIN = 'https://s3-eu-west-1.amazonaws.com/jamcams.tfl.gov.uk/';
 const DEFAULT_TFL_MAX_SOURCES = 250;
 const LONDON_CENTER = { lat: 51.5074, lon: -0.1278 };
+/** Indonesian city ATCS portals: keyless pages/APIs that publish HLS streams. */
+const BANDUNG_CITY_CCTV_URL = 'https://pelindung.bandung.go.id:8443/api/cek';
+const TASIK_CCTV_PAGE_URL = 'https://atcs.tasikmalayakota.go.id/';
+const BANDUNGKAB_CCTV_PAGE_URL = 'https://dishub.bandungkab.go.id/cctv/';
+const DEFAULT_BANDUNG_CITY_MAX_SOURCES = 250;
+const DEFAULT_TASIK_MAX_SOURCES = 80;
+const DEFAULT_BANDUNGKAB_MAX_SOURCES = 40;
+const BANDUNG_CITY_ANCHOR = { lat: -6.9175, lon: 107.6191 };
+const TASIK_ANCHOR = { lat: -7.3274, lon: 108.2207 };
+const BANDUNGKAB_ANCHOR = { lat: -7.0241, lon: 107.5304 };
 /** Camera CATALOGS change rarely; 15 min keeps multi-megabyte upstream list refetches (Austin rows.json + 4 Caltrans districts + TfL) infrequent. Frames are fetched per-request and are unaffected. */
 const CCTV_SOURCE_CACHE_MS = 15 * 60 * 1000;
 /** Per-provider catalog-fetch timeout. Bounds the worst-case refresh so one
@@ -4169,6 +4643,249 @@ async function loadTflSourcesFromOpenData() {
 }
 
 /**
+ * True when a coordinate pair falls inside Indonesia's bounding box.
+ *
+ * @param {number} lat
+ * @param {number} lon
+ * @returns {boolean}
+ */
+function isIndonesianCoordinate(lat, lon) {
+  return Number.isFinite(lat) && Number.isFinite(lon)
+    && lat >= -11.5 && lat <= 6.5
+    && lon >= 94.5 && lon <= 141.5;
+}
+
+/**
+ * Parse the `var cctv={...}` catalog embedded in the Tasikmalaya ATCS page.
+ *
+ * @param {string} html
+ * @returns {Array<object>} Raw camera records, or [] when the page changes.
+ */
+export function parseTasikCctvCatalog(html) {
+  const match = /var\s+cctv\s*=\s*(\{[\s\S]*?\})\s*;\s*(?:var|<\/script>)/.exec(String(html || ''));
+  if (!match) return [];
+  try {
+    const parsed = JSON.parse(match[1]);
+    return Object.values(parsed).filter((row) => row && typeof row === 'object');
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Build a normalized HLS source for an Indonesian ATCS camera.
+ *
+ * @param {object} args
+ * @returns {object|null} Source, or null when required fields are missing.
+ */
+function indonesianHlsSource({ id, name, lat, lon, streamUrl, city, cityId, provider, sourceKind, license, groundElevationM }) {
+  if (!id || !name || !streamUrl) return null;
+  if (!/^https:\/\/[^\s]+\.m3u8(\?[^\s]*)?$/i.test(streamUrl)) return null;
+  if (!isIndonesianCoordinate(lat, lon)) return null;
+  return {
+    id,
+    name,
+    city,
+    cityId,
+    provider,
+    lat,
+    lon,
+    headingDeg: fallbackHeadingFromId(id),
+    headingConfidence: 'low',
+    pitchDeg: -18,
+    fovDeg: 44,
+    rangeM: 145,
+    mountHeightM: 8,
+    groundElevationM,
+    feedType: 'hls',
+    url: streamUrl,
+    snapshotUrl: '',
+    sourceKind,
+    license,
+  };
+}
+
+/**
+ * Load Bandung city CCTV (Diskominfo PELINDUNG). Keyless JSON; 433 HLS streams
+ * with coordinates. The upstream manifest is same-origin relative, so the
+ * proxy's HLS rewriter turns segments into proxy URLs.
+ *
+ * @returns {Promise<Array<object>>} Normalized camera sources.
+ */
+async function loadBandungCitySources() {
+  try {
+    const resp = await fetch(BANDUNG_CITY_CCTV_URL, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(CCTV_SOURCE_FETCH_TIMEOUT_MS),
+    });
+    if (!resp.ok) {
+      console.warn('[CCTV] Bandung city catalog download failed:', resp.status);
+      return [];
+    }
+    const rows = await resp.json();
+    if (!Array.isArray(rows)) return [];
+
+    const cameras = [];
+    for (const row of rows) {
+      let streamUrl = String(row?.stream_cctv || '').trim();
+      // Some catalog rows omit the :3443 stream port; the media server only
+      // answers on it (the 443 host serves the web app).
+      try {
+        const parsed = new URL(streamUrl);
+        if (parsed.hostname === 'pelindung.bandung.go.id' && !parsed.port) {
+          parsed.port = '3443';
+          streamUrl = parsed.toString();
+        }
+      } catch { /* leave as-is; indonesianHlsSource rejects malformed URLs */ }
+      const source = indonesianHlsSource({
+        id: `id-bdg-${String(row?.id || '').replace(/[^a-z0-9-]/gi, '').slice(0, 12) || cameras.length}`,
+        name: String(row?.cctv_name || '').trim(),
+        lat: toFiniteNumber(row?.lat),
+        lon: toFiniteNumber(row?.lng),
+        streamUrl,
+        city: 'Bandung',
+        cityId: 'bandung',
+        provider: 'Diskominfo Kota Bandung',
+        sourceKind: 'bandung-city-cctv',
+        license: 'Bandung City public CCTV (PELINDUNG)',
+        groundElevationM: 768,
+      });
+      if (source) cameras.push(source);
+    }
+
+    const maxRaw = Number(process.env.CCTV_BANDUNG_CITY_MAX_SOURCES || DEFAULT_BANDUNG_CITY_MAX_SOURCES);
+    const maxCount = Number.isFinite(maxRaw) ? Math.max(8, Math.min(600, Math.floor(maxRaw))) : DEFAULT_BANDUNG_CITY_MAX_SOURCES;
+    const prioritized = prioritizeSources(cameras, maxCount, [BANDUNG_CITY_ANCHOR]);
+    console.log(`[CCTV] Loaded Bandung city sources: ${cameras.length} HLS (using nearest ${prioritized.length})`);
+    return prioritized;
+  } catch (error) {
+    console.warn('[CCTV] Bandung city catalog error:', error?.message || error);
+    return [];
+  }
+}
+
+/**
+ * Load Tasikmalaya ATCS cameras. Keyless HTML page embeds `var cctv={...}`
+ * with HLS links and coordinates.
+ *
+ * @returns {Promise<Array<object>>} Normalized camera sources.
+ */
+async function loadTasikmalayaSources() {
+  try {
+    const resp = await fetch(TASIK_CCTV_PAGE_URL, {
+      headers: { Accept: 'text/html' },
+      signal: AbortSignal.timeout(CCTV_SOURCE_FETCH_TIMEOUT_MS),
+    });
+    if (!resp.ok) {
+      console.warn('[CCTV] Tasikmalaya ATCS download failed:', resp.status);
+      return [];
+    }
+    const rows = parseTasikCctvCatalog(await resp.text());
+
+    const cameras = [];
+    for (const row of rows) {
+      const source = indonesianHlsSource({
+        id: `id-tsk-${String(row?.id || '').replace(/[^a-z0-9-]/gi, '') || cameras.length}`,
+        name: String(row?.nama || '').trim(),
+        lat: toFiniteNumber(row?.lokasi_lat),
+        lon: toFiniteNumber(row?.lokasi_lng),
+        streamUrl: String(row?.link || '').trim(),
+        city: 'Tasikmalaya',
+        cityId: 'tasikmalaya',
+        provider: 'ATCS Kota Tasikmalaya',
+        sourceKind: 'tasikmalaya-atcs',
+        license: 'ATCS Kota Tasikmalaya public stream',
+        groundElevationM: 350,
+      });
+      if (source) cameras.push(source);
+    }
+
+    const maxRaw = Number(process.env.CCTV_TASIK_MAX_SOURCES || DEFAULT_TASIK_MAX_SOURCES);
+    const maxCount = Number.isFinite(maxRaw) ? Math.max(8, Math.min(200, Math.floor(maxRaw))) : DEFAULT_TASIK_MAX_SOURCES;
+    const prioritized = prioritizeSources(cameras, maxCount, [TASIK_ANCHOR]);
+    console.log(`[CCTV] Loaded Tasikmalaya sources: ${cameras.length} HLS (using nearest ${prioritized.length})`);
+    return prioritized;
+  } catch (error) {
+    console.warn('[CCTV] Tasikmalaya ATCS error:', error?.message || error);
+    return [];
+  }
+}
+
+/**
+ * Load Dishub Kabupaten Bandung cameras. Keyless HTML page embeds a JS array
+ * of `{ id, name, coordinates, streamUrl }` HLS entries.
+ *
+ * @returns {Promise<Array<object>>} Normalized camera sources.
+ */
+async function loadBandungKabSources() {
+  try {
+    const resp = await fetch(BANDUNGKAB_CCTV_PAGE_URL, {
+      headers: { Accept: 'text/html' },
+      signal: AbortSignal.timeout(CCTV_SOURCE_FETCH_TIMEOUT_MS),
+    });
+    if (!resp.ok) {
+      console.warn('[CCTV] Bandung Kabupaten download failed:', resp.status);
+      return [];
+    }
+    const html = await resp.text();
+
+    // The page renders the same camera list twice (desktop + mobile grids), so
+    // dedupe by upstream id before prioritizing.
+    const byId = new Map();
+    const pattern = /\{\s*id:\s*(\d+),\s*name:\s*"((?:[^"\\]|\\.)*)",\s*code:\s*"((?:[^"\\]|\\.)*)",\s*coordinates:\s*\[\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*\],\s*streamUrl:\s*"((?:[^"\\]|\\.)*)"/g;
+    let match;
+    let parsed = 0;
+    while ((match = pattern.exec(html)) !== null) {
+      parsed += 1;
+      const [, rawId, rawName, rawCode, rawLat, rawLon, rawUrl] = match;
+      const streamUrl = rawUrl.replace(/\\\//g, '/').trim();
+      // Tokenless rows in the second (mobile) grid are stale mirror paths that
+      // answer "Not Authorized"; keep only the tokenized desktop entries.
+      if (/^https?:\/\/cctv\.bandungkab\.go\.id\//i.test(streamUrl) && !/[?&]api=/.test(streamUrl)) continue;
+      const source = indonesianHlsSource({
+        id: `id-bdgkab-${rawId}`,
+        name: `${rawName.trim()}${rawCode ? ` (${rawCode})` : ''}`,
+        lat: toFiniteNumber(rawLat),
+        lon: toFiniteNumber(rawLon),
+        streamUrl,
+        city: 'Kabupaten Bandung',
+        cityId: 'bandung-kabupaten',
+        provider: 'Dishub Kabupaten Bandung',
+        sourceKind: 'bandungkab-dishub',
+        license: 'Dishub Kabupaten Bandung public stream',
+        groundElevationM: 700,
+      });
+      if (source && !byId.has(source.id)) byId.set(source.id, source);
+    }
+    const cameras = Array.from(byId.values());
+
+    const maxRaw = Number(process.env.CCTV_BANDUNGKAB_MAX_SOURCES || DEFAULT_BANDUNGKAB_MAX_SOURCES);
+    const maxCount = Number.isFinite(maxRaw) ? Math.max(8, Math.min(100, Math.floor(maxRaw))) : DEFAULT_BANDUNGKAB_MAX_SOURCES;
+    const prioritized = prioritizeSources(cameras, maxCount, [BANDUNGKAB_ANCHOR]);
+    console.log(`[CCTV] Loaded Bandung Kabupaten sources: ${cameras.length} unique HLS from ${parsed} rows (using nearest ${prioritized.length})`);
+    return prioritized;
+  } catch (error) {
+    console.warn('[CCTV] Bandung Kabupaten error:', error?.message || error);
+    return [];
+  }
+}
+
+/**
+ * Load all enabled Indonesian ATCS packs in parallel. Each pack fails
+ * independently so one portal outage never hides the others.
+ *
+ * @returns {Promise<Array<object>>} Concatenated normalized sources.
+ */
+async function loadIndonesianCctvSources() {
+  const results = await Promise.allSettled([
+    loadBandungCitySources(),
+    loadTasikmalayaSources(),
+    loadBandungKabSources(),
+  ]);
+  return results.flatMap((result) => (result.status === 'fulfilled' ? result.value : []));
+}
+
+/**
  * Normalize a raw CCTV source item into a canonical shape with safe defaults.
  *
  * @param {object} item - Raw source from file, env, or Austin Open Data.
@@ -4207,9 +4924,9 @@ function normalizeSourceItem(item) {
 /**
  * Assemble and cache the merged CCTV source list.
  *
- * Merges sources from three origins (Austin Open Data, local file,
- * env variable), deduplicates by ID, applies the global max cap, and
- * caches for CCTV_SOURCE_CACHE_MS.
+ * Merges sources from live packs (Austin, Caltrans, TfL, Indonesian ATCS),
+ * a local file, and an env variable, deduplicates by ID, applies the global
+ * max cap, and caches for CCTV_SOURCE_CACHE_MS.
  *
  * @returns {Promise<Array<object>>} Deduplicated, capped source list.
  */
@@ -4239,27 +4956,31 @@ async function refreshCctvSources() {
 
   const forceAustin = String(process.env.CCTV_FORCE_AUSTIN || '').trim() === '1';
   const preferAustin = String(process.env.CCTV_PREFER_AUSTIN || '1').trim() !== '0';
-  // Live open-data packs (Austin + Caltrans + TfL) load unless a file/env pack
-  // is configured and live packs aren't forced — same gate that governed the
-  // Austin-only fetch, now governing all three. Each pack fails independently.
+  // Live open-data packs (Austin + Caltrans + TfL + Indonesian ATCS) load
+  // unless a file/env pack is configured and live packs aren't forced. Each
+  // pack fails independently.
   const needsLiveSources = forceAustin || ((fromFile.length + fromEnv.length) === 0 && preferAustin);
   const tflEnabled = String(process.env.CCTV_TFL_ENABLED || '1').trim() !== '0';
+  const indonesiaEnabled = String(process.env.CCTV_INDONESIA_ENABLED || '1').trim() !== '0';
 
   let fromAustin = [];
   let fromCaltrans = [];
   let fromTfl = [];
+  let fromIndonesia = [];
   if (needsLiveSources) {
-    const [austinResult, caltransResult, tflResult] = await Promise.allSettled([
+    const [austinResult, caltransResult, tflResult, indonesiaResult] = await Promise.allSettled([
       loadAustinSourcesFromOpenData(),
       loadCaltransSourcesFromOpenData(),
       tflEnabled ? loadTflSourcesFromOpenData() : Promise.resolve([]),
+      indonesiaEnabled ? loadIndonesianCctvSources() : Promise.resolve([]),
     ]);
     fromAustin = austinResult.status === 'fulfilled' ? austinResult.value : [];
     fromCaltrans = caltransResult.status === 'fulfilled' ? caltransResult.value : [];
     fromTfl = tflResult.status === 'fulfilled' ? tflResult.value : [];
+    fromIndonesia = indonesiaResult.status === 'fulfilled' ? indonesiaResult.value : [];
   }
   // Live sources first so file/env overrides win on duplicate IDs (Map last-write).
-  const merged = [...fromAustin, ...fromCaltrans, ...fromTfl, ...fromFile, ...fromEnv];
+  const merged = [...fromAustin, ...fromCaltrans, ...fromTfl, ...fromIndonesia, ...fromFile, ...fromEnv];
 
   // Deduplicate by camera ID (last-write wins because of Map.set)
   const byId = new Map();
@@ -4503,6 +5224,40 @@ export async function fetchCctvImageFromUpstream(url, {
 }
 
 /**
+ * Rewrite every URI in an HLS playlist so HLS.js fetches it through this proxy.
+ * Same-origin URIs (relative segments, variants, keys, init maps) are routed
+ * via `?seg=`; cross-origin references are left untouched.
+ *
+ * @param {string} playlist - Upstream playlist text.
+ * @param {string} baseUrl - Playlist URL used to resolve relative references.
+ * @param {string} cameraId - Registered camera id used in the proxy path.
+ * @returns {string} Rewritten playlist.
+ */
+export function rewriteHlsPlaylist(playlist, baseUrl, cameraId) {
+  const base = new URL(baseUrl);
+  const proxyUri = (ref) => {
+    try {
+      const abs = new URL(ref, base);
+      if (abs.origin !== base.origin) return abs.toString();
+      return `/api/cctv/media/${encodeURIComponent(cameraId)}?seg=${encodeURIComponent(abs.toString())}`;
+    } catch {
+      return ref;
+    }
+  };
+  return String(playlist || '')
+    .split(/\r?\n/)
+    .map((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return line;
+      if (trimmed.startsWith('#')) {
+        return line.replace(/URI="([^"]+)"/g, (_, ref) => `URI="${proxyUri(ref)}"`);
+      }
+      return proxyUri(trimmed);
+    })
+    .join('\n');
+}
+
+/**
  * Vite plugin: CCTV camera proxy with source registry, frame/media serving,
  * fallback chain (upstream -> Street View -> synthetic SVG), and health tracking.
  *
@@ -4661,6 +5416,81 @@ function cctvProxy() {
               return;
             }
 
+            // HLS segments/variants/key URIs rewritten by rewriteHlsPlaylist.
+            // Same-origin as the registered playlist only: the registered source
+            // stays the sole SSRF surface (no client-supplied hosts).
+            const segParam = url.searchParams.get('seg');
+            if (segParam) {
+              if (feedType !== 'hls') {
+                res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+                res.end(JSON.stringify({ error: 'seg is only valid for HLS feeds' }));
+                return;
+              }
+              let segUrl;
+              try {
+                segUrl = new URL(segParam);
+              } catch {
+                res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+                res.end(JSON.stringify({ error: 'Invalid seg URL' }));
+                return;
+              }
+              if (segUrl.origin !== new URL(mediaUrl).origin) {
+                res.writeHead(403, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+                res.end(JSON.stringify({ error: 'seg origin not allowed' }));
+                return;
+              }
+              try {
+                const upstreamHeaders = { 'User-Agent': 'gods-eye-view-cctv-proxy/1.0' };
+                if (req.headers?.range) upstreamHeaders.Range = req.headers.range;
+                const upstream = await fetch(segUrl.toString(), { headers: upstreamHeaders });
+                if (!upstream.ok) {
+                  res.writeHead(upstream.status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+                  res.end(JSON.stringify({ error: `Upstream returned ${upstream.status}` }));
+                  return;
+                }
+                const segType = upstream.headers.get('content-type') || '';
+                if (segType.includes('mpegurl') || /\.m3u8(\?|$)/i.test(segUrl.pathname)) {
+                  const variant = await upstream.text();
+                  if (!variant.trimStart().startsWith('#EXTM3U')) {
+                    setHealth(cameraId, {
+                      status: 'degraded',
+                      sourceKind: 'upstream',
+                      label: source?.provider || 'Configured source',
+                      message: 'Upstream variant is not an HLS playlist',
+                    });
+                    res.writeHead(502, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+                    res.end(JSON.stringify({ error: 'Invalid HLS variant' }));
+                    return;
+                  }
+                  res.writeHead(200, {
+                    'Content-Type': 'application/vnd.apple.mpegurl',
+                    'Cache-Control': 'no-store',
+                    'X-CCTV-Source': 'hls-playlist',
+                  });
+                  res.end(rewriteHlsPlaylist(variant, segUrl.toString(), cameraId));
+                  return;
+                }
+                setHealth(cameraId, {
+                  status: 'ok',
+                  sourceKind: 'live',
+                  label: source?.provider || 'Configured source',
+                  message: 'HLS segment served',
+                });
+                await proxyMediaResponse(res, upstream, { sourceHeader: 'hls-segment' });
+                return;
+              } catch (error) {
+                setHealth(cameraId, {
+                  status: 'degraded',
+                  sourceKind: 'upstream',
+                  label: source?.provider || 'Configured source',
+                  message: error?.message || 'HLS segment fetch failed',
+                });
+                res.writeHead(502, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+                res.end(JSON.stringify({ error: 'HLS segment proxy failed' }));
+                return;
+              }
+            }
+
             try {
               const upstreamHeaders = { 'User-Agent': 'gods-eye-view-cctv-proxy/1.0' };
               const requestRange = req.headers?.range;
@@ -4678,6 +5508,34 @@ function cctvProxy() {
                 });
                 res.writeHead(upstream.status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
                 res.end(JSON.stringify({ error: `Upstream returned ${upstream.status}` }));
+                return;
+              }
+
+              if (feedType === 'hls' && (contentType.includes('mpegurl') || /\.m3u8(\?|$)/i.test(mediaUrl))) {
+                const playlist = await upstream.text();
+                if (!playlist.trimStart().startsWith('#EXTM3U')) {
+                  setHealth(cameraId, {
+                    status: 'degraded',
+                    sourceKind: 'upstream',
+                    label: source?.provider || 'Configured source',
+                    message: 'Upstream returned a non-HLS body',
+                  });
+                  res.writeHead(502, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+                  res.end(JSON.stringify({ error: 'Invalid HLS playlist' }));
+                  return;
+                }
+                setHealth(cameraId, {
+                  status: 'ok',
+                  sourceKind: 'live',
+                  label: source?.provider || 'Configured source',
+                  message: 'HLS playlist served',
+                });
+                res.writeHead(200, {
+                  'Content-Type': 'application/vnd.apple.mpegurl',
+                  'Cache-Control': 'no-store',
+                  'X-CCTV-Source': 'hls-playlist',
+                });
+                res.end(rewriteHlsPlaylist(playlist, mediaUrl, cameraId));
                 return;
               }
 
@@ -7718,7 +8576,7 @@ function keySetupEndpoint() {
  * plugins, configures the dev server host/port, and exposes selected
  * API keys to the client as import.meta.env defines.
  */
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ mode, command }) => {
   // Load only this checkout's dotenv files. Shell/Keychain values still win,
   // and no sibling workspace is consulted implicitly.
   const loaded = loadEnv(mode, __dirname, '');
@@ -7728,6 +8586,13 @@ export default defineConfig(({ mode }) => {
   const env = { ...process.env };
   const localAllowedHosts = ['localhost', '127.0.0.1', '.local'];
   return {
+    // A built bundle has to survive being opened by something that is not
+    // Vite — VS Code's static preview, a file://-served dist/, a subpath host.
+    // Relative base rewrites every emitted reference to ./assets/… (and the
+    // Cesium plugin joins it for Widgets/Workers), so the module graph resolves
+    // without a dev server and the loader actually gets to hide. The dev
+    // server keeps the absolute '/' base it requires.
+    base: command === 'build' ? './' : '/',
     plugins: [
       cesium(),
       openSkyProxy(),
@@ -7743,6 +8608,8 @@ export default defineConfig(({ mode }) => {
       weatherEffectsProxy(),
       cctvProxy(),
       radioBrowserProxy(),
+      indonesianDataProxy(),
+      apiIndonesiaProxy(),
       gbfsProxy(),
       adsbLolProxy(),
       aisLiveProxy(),

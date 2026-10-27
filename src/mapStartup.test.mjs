@@ -102,3 +102,18 @@ test('failed direct and ion requests preserve the keyless OSM fallback', async (
   assert.equal(Cesium.calls.length, 2);
   assert.equal(Cesium.GoogleMaps.defaultApiKey, undefined);
 });
+
+test('a stalled tileset request times out and preserves keyless startup', async () => {
+  const Cesium = fakeCesium();
+  Cesium.createGooglePhotorealistic3DTileset = () => new Promise(() => {});
+
+  const result = await loadPhotorealisticTileset(Cesium, {
+    googleApiKey: 'google-secret',
+    requestTimeoutMs: 5,
+  });
+
+  assert.equal(result.tileset, null);
+  assert.equal(result.route, 'osm');
+  assert.match(result.errors[0].message, /timed out/);
+  assert.equal(Cesium.GoogleMaps.defaultApiKey, undefined);
+});

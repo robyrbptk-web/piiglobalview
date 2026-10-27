@@ -1,8 +1,19 @@
 const clean = (value) => String(value || '').trim();
+const DEFAULT_TILESET_TIMEOUT_MS = 15_000;
+
+function withTimeout(promise, timeoutMs) {
+  let timeoutId;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timeoutId = setTimeout(() => reject(new Error(`Google 3D Tiles request timed out after ${timeoutMs} ms`)), timeoutMs);
+    }),
+  ]).finally(() => clearTimeout(timeoutId));
+}
 
 /**
  * Decide which map provider can deliver the best startup experience.
- * @param {{googleApiKey?: string, cesiumToken?: string}} credentials
+ * @param {{googleApiKey?: string, cesiumToken?: string, requestTimeoutMs?: number}} credentials
  * @returns {'google-direct'|'google-ion'|'osm'}
  */
 export function selectMapStartupRoute({ googleApiKey = '', cesiumToken = '' } = {}) {
@@ -22,7 +33,11 @@ export function selectMapStartupRoute({ googleApiKey = '', cesiumToken = '' } = 
  */
 export async function loadPhotorealisticTileset(
   Cesium,
-  { googleApiKey = '', cesiumToken = '' } = {},
+  {
+    googleApiKey = '',
+    cesiumToken = '',
+    requestTimeoutMs = DEFAULT_TILESET_TIMEOUT_MS,
+  } = {},
 ) {
   const googleKey = clean(googleApiKey);
   const ionToken = clean(cesiumToken);
@@ -37,9 +52,12 @@ export async function loadPhotorealisticTileset(
   for (const attempt of attempts) {
     Cesium.GoogleMaps.defaultApiKey = attempt.googleKey;
     try {
-      const tileset = await Cesium.createGooglePhotorealistic3DTileset({
-        onlyUsingWithGoogleGeocoder: true,
-      });
+      const tileset = await withTimeout(
+        Cesium.createGooglePhotorealistic3DTileset({
+          onlyUsingWithGoogleGeocoder: true,
+        }),
+        requestTimeoutMs,
+      );
       return { tileset, route: attempt.route, errors };
     } catch (error) {
       errors.push(error instanceof Error ? error : new Error(String(error)));

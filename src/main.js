@@ -5,6 +5,9 @@ import { DataLayerManager } from './data/manager.js';
 import flightsLayer from './data/flights.js';
 import militaryFlightsLayer from './data/militaryFlights.js';
 import earthquakesLayer from './data/earthquakes.js';
+import schoolsLayer from './data/schools.js';
+import volcanoesLayer from './data/volcanoes.js';
+import { indonesianApiLayers } from './data/indonesianApiLayers.js';
 import satellitesLayer from './data/satellites.js';
 import rocketLaunchesLayer from './data/rocketLaunches.js';
 import trafficLayer from './data/traffic.js';
@@ -73,7 +76,7 @@ async function init() {
   const loaderStatus = loadingScreen.querySelector('.loader-status');
 
   try {
-    loaderStatus.textContent = 'Configuring viewer...';
+    loaderStatus.textContent = 'Menyiapkan penampil…';
 
     // A direct Google key provides Google 3D plus GEV place search. Cesium ion
     // can host the same 3D tiles and also powers Bing/world-terrain stacks.
@@ -146,8 +149,8 @@ async function init() {
     viewer.scene.skyAtmosphere.brightnessShift = -0.08;
 
     loaderStatus.textContent = googleApiKey || cesiumToken
-      ? 'Loading Google 3D Tiles...'
-      : 'Loading the keyless globe...';
+      ? 'Memuat Google 3D Tiles…'
+      : 'Memuat globe tanpa kunci…';
     const photoreal = await loadPhotorealisticTileset(Cesium, {
       googleApiKey,
       cesiumToken,
@@ -164,12 +167,12 @@ async function init() {
         const tileError = photoreal.errors.at(-1);
         console.warn('[Init] Google 3D Tiles unavailable, using the keyless globe:', tileError);
         const tileErrorDetail = describeError(tileError);
-        loaderStatus.textContent = `Google 3D Tiles unavailable (${tileErrorDetail}). Loading the keyless globe...`;
+        loaderStatus.textContent = `Google 3D Tiles tidak tersedia (${tileErrorDetail}). Memuat globe tanpa kunci…`;
       }
       viewer.scene.globe.show = true;
     }
 
-    loaderStatus.textContent = 'Initializing systems...';
+    loaderStatus.textContent = 'Menginisialisasi sistem…';
 
     const mapStackController = new MapStackController(viewer, {
       googleTileset: tileset,
@@ -197,10 +200,10 @@ async function init() {
 
     // If no share link state, do default fly-to Austin
     if (!styleManager.hasShareState) {
-      loaderStatus.textContent = 'Flying to Austin, TX...';
+      loaderStatus.textContent = 'Menerbangkan kamera ke Austin, TX…';
       flyToAustin(viewer);
     } else {
-      loaderStatus.textContent = 'Restoring shared view...';
+      loaderStatus.textContent = 'Memulihkan tampilan bersama…';
     }
 
     // Initialize data layer manager
@@ -210,6 +213,11 @@ async function init() {
     dataManager.register(flightsLayer);
     dataManager.register(militaryFlightsLayer);
     dataManager.register(earthquakesLayer);
+    dataManager.register(schoolsLayer);
+    dataManager.register(volcanoesLayer);
+    for (const layer of indonesianApiLayers) {
+      dataManager.register(layer);
+    }
     dataManager.register(satellitesLayer);
     dataManager.register(rocketLaunchesLayer);
     rocketLaunchesLayer.attachDataManager(dataManager);
@@ -330,7 +338,7 @@ async function init() {
 
   } catch (error) {
     console.error("God's Eye View initialization failed:", error);
-    loaderStatus.textContent = `Error: ${describeError(error)}`;
+    loaderStatus.textContent = `GALAT: ${describeError(error)}`;
     loaderStatus.style.color = '#ff4444';
   }
 }

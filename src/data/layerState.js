@@ -280,6 +280,9 @@ export const LAYER_STATE_REGISTRY = Object.freeze([
   Object.freeze({ id: 'cctv', token: 'c', disposition: 'enabled+options', optionOwner: 'cctv' }),
   Object.freeze({ id: 'earthquakes', token: 'e', disposition: 'enabled-only' }),
   Object.freeze({ id: 'flights', token: 'f', disposition: 'enabled+options', optionOwner: 'flights' }),
+  Object.freeze({ id: 'indonesian-hospitals', token: 'h', disposition: 'enabled-only' }),
+  Object.freeze({ id: 'indonesian-schools', token: 'k', disposition: 'enabled-only' }),
+  Object.freeze({ id: 'indonesian-volcanoes', token: 'o', disposition: 'enabled-only' }),
   Object.freeze({ id: 'local-dams', token: 'q', disposition: 'enabled-only' }),
   Object.freeze({ id: 'local-datacenters', token: 'd', disposition: 'enabled-only' }),
   Object.freeze({ id: 'local-firms', token: 'w', disposition: 'enabled-only' }),
@@ -291,6 +294,7 @@ export const LAYER_STATE_REGISTRY = Object.freeze([
   Object.freeze({ id: 'satellites', token: 's', disposition: 'enabled+options', optionOwner: 'satellites' }),
   Object.freeze({ id: 'telegeography-submarine-cables', token: 'u', disposition: 'enabled-only' }),
   Object.freeze({ id: 'traffic', token: 't', disposition: 'enabled-only' }),
+  Object.freeze({ id: 'transjakarta-halte', token: 'j', disposition: 'enabled-only' }),
 ]);
 
 export const REGISTERED_LAYER_IDS = Object.freeze(LAYER_STATE_REGISTRY.map((entry) => entry.id));

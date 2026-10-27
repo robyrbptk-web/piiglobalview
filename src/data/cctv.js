@@ -576,6 +576,73 @@ function isVideoFeedType(feedType) {
   return feedType === 'mp4' || feedType === 'hls' || feedType === 'webm';
 }
 
+/** Lazily loaded hls.js module promise (only used when an HLS camera activates). */
+let _hlsModulePromise = null;
+
+function loadHlsModule() {
+  if (!_hlsModulePromise) {
+    _hlsModulePromise = import('hls.js').catch((error) => {
+      console.warn('[Data:CCTV] HLS support unavailable:', error?.message || error);
+      return null;
+    });
+  }
+  return _hlsModulePromise;
+}
+
+/**
+ * Points a video element at an HLS source. Chrome/Firefox cannot play m3u8 in
+ * a plain <video>, so hls.js drives playback; Safari falls back to native HLS.
+ * Exported for the CCTV panel preview, which plays the same proxy URL in its
+ * own element instead of polling snapshot frames (HLS cameras have none).
+ *
+ * @param {HTMLVideoElement} video
+ * @param {string} src
+ * @returns {Promise<Object|null>} hls.js instance when used, else null.
+ */
+export async function attachHlsToVideo(video, src) {
+  if (!video || !src) return null;
+  const module = await loadHlsModule();
+  const Hls = module?.default;
+  if (!Hls) return null;
+  if (Hls.isSupported()) {
+    const hls = new Hls({ enableWorker: true, backBufferLength: 20 });
+    hls.loadSource(src);
+    hls.attachMedia(video);
+    return hls;
+  }
+  if (video.canPlayType?.('application/vnd.apple.mpegurl')) {
+    video.src = src;
+  }
+  return null;
+}
+
+/**
+ * Points a video element at a camera's media URL. Native playback handles
+ * mp4/webm; HLS goes through hls.js (Chrome/Firefox cannot play m3u8 in a
+ * plain <video>), with a Safari-native fallback.
+ *
+ * @param {Object} runtime - Projection runtime owning the video element.
+ * @param {Object} camera - Camera descriptor.
+ * @param {string} feedType - Normalized feed type.
+ */
+function attachVideoSource(runtime, camera, feedType) {
+  const video = runtime?.video;
+  if (!video) return;
+  const src = mediaUrlFor(camera);
+  if (feedType !== 'hls') {
+    video.src = src;
+    return;
+  }
+  void attachHlsToVideo(video, src).then((hls) => {
+    if (!hls) return;
+    if (runtime.destroyed) {
+      hls.destroy();
+      return;
+    }
+    runtime.hls = hls;
+  });
+}
+
 /**
  * Coerces a value to a finite number or returns the fallback.
  * @param {*} value
@@ -1719,11 +1786,11 @@ function createProjectionRuntime(record) {
     video.playsInline = true;
     video.crossOrigin = 'anonymous';
     video.preload = 'auto';
-    video.src = mediaUrlFor(record.camera);
     video.addEventListener('canplay', () => {
       video.play().catch(() => {});
     });
     runtime.video = video;
+    attachVideoSource(runtime, record.camera, feedType);
   } else {
     const img = new Image();
     img.decoding = 'async';
@@ -1743,16 +1810,29 @@ function createProjectionRuntime(record) {
   // Monitor plane = the frustum's far cap: video feeds bind the video element
   // directly (Cesium updates video-backed entity materials per frame); image
   // feeds start on the placeholder canvas and switch to double-buffer swaps
-  // at <=1Hz.
+  // at <=1Hz. A video only becomes a valid texture source once metadata has
+  // given it dimensions — binding it earlier makes Cesium throw
+  // "Expected width to be greater than 0" and stops the whole render loop.
   const geometry = record.frustumGeometry
     || computeFrustumGeometry(record.camera, groundAltFor(record), record.probeClampRangeM);
   const positions = record.frustumPositions || frustumCartesians(geometry);
   runtime.planeMaterial = new Cesium.ImageMaterialProperty({
-    image: (mode === 'video' && runtime.video) ? runtime.video : canvas,
+    image: canvas,
     transparent: true,
     color: Cesium.Color.WHITE.withAlpha(0.95),
   });
   createProjectionPlane(record, runtime, geometry, positions);
+
+  if (mode === 'video' && runtime.video) {
+    const bindVideoTexture = () => {
+      if (runtime.destroyed || !runtime.planeMaterial || !runtime.video) return;
+      if (runtime.video.videoWidth > 0 && runtime.video.videoHeight > 0) {
+        runtime.planeMaterial.image = runtime.video;
+      }
+    };
+    runtime.video.addEventListener('loadedmetadata', bindVideoTexture);
+    runtime.video.addEventListener('canplay', bindVideoTexture);
+  }
 
   return runtime;
 }
@@ -1780,6 +1860,11 @@ function ensureProjectionRuntime(record) {
  */
 function destroyProjectionRuntime(runtime) {
   if (!runtime) return;
+  runtime.destroyed = true;
+  if (runtime.hls) {
+    runtime.hls.destroy();
+    runtime.hls = null;
+  }
   if (runtime.video) {
     runtime.video.pause();
     runtime.video.removeAttribute('src');
@@ -3349,8 +3434,8 @@ function buildSummaryText() {
   const active = getActiveRecord();
   if (!active) {
     return _records.length
-      ? `${_records.length} CAMERAS STANDING BY · NO CAMERA SELECTED · CLICK A CAMERA TO ACTIVATE`
-      : 'No cameras available in catalog.';
+      ? `${_records.length} KAMERA SIAGA · BELUM ADA KAMERA DIPILIH · KLIK KAMERA UNTUK AKTIF`
+      : 'Katalog kamera belum tersedia.';
   }
 
   const area = sectorAreaKm2(active.camera.rangeM, active.camera.fovDeg);
