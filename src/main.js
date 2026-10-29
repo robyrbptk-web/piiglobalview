@@ -1,7 +1,7 @@
 import * as Cesium from 'cesium';
 import { StyleManager } from './ui.js';
-import { flyToAustin } from './camera.js';
 import { DataLayerManager } from './data/manager.js';
+import { flyToOffice, installOfficeMarker } from './data/pbPiiOffice.js';
 import flightsLayer from './data/flights.js';
 import militaryFlightsLayer from './data/militaryFlights.js';
 import earthquakesLayer from './data/earthquakes.js';
@@ -18,7 +18,7 @@ import aisLiveVesselsLayer from './data/aisLiveVessels.js';
 import militaryInstallationsLayer from './data/militaryInstallations.js';
 import militaryAwarenessLayer from './data/militaryAwareness.js';
 import localDataLayers from './data/localLayers.js';
-import { LAYER_STATE_REGISTRY } from './data/layerState.js';
+import { LAYER_STATE_REGISTRY, LAYER_STATE_STORAGE_KEY } from './data/layerState.js';
 import { registerDataCredits } from './data/dataCredits.js';
 import { SceneDirector } from './scenes/director.js';
 import { initGevVoiceCommands } from './voice/gevRealtime.js';
@@ -64,6 +64,23 @@ function describeError(error) {
     }
   }
   return String(error);
+}
+
+/**
+ * Indonesian public-data layers that need no key, so a first visit already has
+ * Indonesian information on an Indonesian default view. Hospitals and
+ * Transjakarta are deliberately absent: they are key-gated, and switching them
+ * on would only paint a failure state the visitor did not ask for.
+ */
+const DEFAULT_INDONESIAN_LAYER_IDS = Object.freeze(['indonesian-schools', 'indonesian-volcanoes']);
+
+/** Does this browser already hold an explicit layer preference? */
+function hasStoredLayerPreferences() {
+  try {
+    return Boolean(globalThis.localStorage?.getItem(LAYER_STATE_STORAGE_KEY));
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -198,10 +215,14 @@ async function init() {
     const weatherEffects = null;
     const cockpitCloudEffects = initCockpitCloudEffects(viewer);
 
-    // If no share link state, do default fly-to Austin
+    // The secretariat is a fixed landmark, not a toggleable layer: install it
+    // before any feed work so the opening shot always has something true on it.
+    const officeMarker = installOfficeMarker(viewer);
+
+    // If no share link state, the globe opens on the PB PII secretariat.
     if (!styleManager.hasShareState) {
-      loaderStatus.textContent = 'Menerbangkan kamera ke Austin, TX…';
-      flyToAustin(viewer);
+      loaderStatus.textContent = 'Menerbangkan kamera ke Sekretariat PB PII…';
+      flyToOffice(viewer);
     } else {
       loaderStatus.textContent = 'Memulihkan tampilan bersama…';
     }
@@ -246,6 +267,16 @@ async function init() {
     }
     dataManager.buildTogglePanel(document.getElementById('data-toggles'));
     styleManager.attachDataManager(dataManager);
+
+    // Fresh boot starts with the keyless Indonesian feeds already on. A share
+    // link owns its own state, and any saved preference — including one that
+    // switched these off — wins: the check mirrors LayerStateCoordinator's own
+    // source selection rather than guessing at it.
+    if (!styleManager.hasShareState && !hasStoredLayerPreferences()) {
+      for (const layerId of DEFAULT_INDONESIAN_LAYER_IDS) {
+        void dataManager.setEnabled(layerId, true, { origin: 'programmatic' });
+      }
+    }
 
     // Initialize deterministic scene playback for social clip capture
     const sceneDirector = new SceneDirector(viewer, styleManager, dataManager);
@@ -329,6 +360,7 @@ async function init() {
       sceneDirector,
       mapStackController,
       annotations,
+      officeMarker,
       weatherEffects,
       cockpitCloudEffects,
       getRenderGovernorDiagnostics,

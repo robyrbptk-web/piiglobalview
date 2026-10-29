@@ -2222,6 +2222,9 @@ export class DataLayerManager {
     }
     const presentedError = stats.error || stats.lastError || stats.managerRefreshError;
     if (presentedError) {
+      // The toggle button already carries the state badge, and the key hint is
+      // self-describing — repeating "UNAVAILABLE" only crowds the line.
+      if (stats.keyRequired) return `${presentedError} · ${source}`;
       if (typeof stats.retryInSec === 'number' && stats.retryInSec > 0) {
         return `${stateLabel} · ${source} · ${presentedError} · retry ${stats.retryInSec}s`;
       }

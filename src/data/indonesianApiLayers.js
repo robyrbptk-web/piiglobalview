@@ -14,6 +14,13 @@ import { governorRequestRender } from '../renderGovernor.js';
 
 const REFRESH_MS = 12 * 3600_000;
 const MAX_LABEL_LENGTH = 44;
+/**
+ * Row copy for the one failure an operator can fix themselves. The proxy
+ * answers 503/MISSING_API_KEY when no key is configured. The panel that writes
+ * it only exists on a dev server, so the copy names the free key source rather
+ * than a control that a deployed build does not show.
+ */
+const MISSING_KEY_MESSAGE = 'butuh kunci API Indonesia (gratis, dashboard.apiindonesia.id)';
 
 export const HOSPITALS_LAYER_ID = 'indonesian-hospitals';
 export const TRANSJAKARTA_LAYER_ID = 'transjakarta-halte';
@@ -176,6 +183,7 @@ function createPointLayer({
   let _count = 0;
   let _lastUpdate = null;
   let _lastError = null;
+  let _keyRequired = false;
   let _skipped = 0;
   let _loading = false;
   let _loadingLabel = '';
@@ -307,6 +315,7 @@ function createPointLayer({
     _count = plotted;
     _lastUpdate = Date.now();
     _lastError = null;
+    _keyRequired = false;
     console.log(`[Data:${id}] ${plotted} plotted from ${rows.length} rows (${_skipped} skipped)`);
     governorRequestRender(`${id}-load`);
   }
@@ -335,7 +344,9 @@ function createPointLayer({
           // The proxy says WHY in its JSON body (missing key, upstream refusal);
           // a bare HTTP 503 tells the operator nothing.
           const detail = await response.json().catch(() => null);
-          throw new Error(detail?.error || `HTTP ${response.status}`);
+          const error = new Error(detail?.error || `HTTP ${response.status}`);
+          error.code = detail?.code || null;
+          throw error;
         }
         const payload = await response.json();
         if (epoch !== _loadEpoch || !_enabled) return false;
@@ -346,7 +357,10 @@ function createPointLayer({
         return true;
       } catch (error) {
         if (epoch !== _loadEpoch || controller.signal.aborted) return false;
-        _lastError = `API Indonesia: ${error?.message || 'tidak dapat dijangkau'}`;
+        _keyRequired = error?.code === 'MISSING_API_KEY';
+        _lastError = _keyRequired
+          ? MISSING_KEY_MESSAGE
+          : `API Indonesia: ${error?.message || 'tidak dapat dijangkau'}`;
         console.warn(`[Data:${id}] load failed:`, error);
         return false;
       } finally {
@@ -494,6 +508,7 @@ function createPointLayer({
         count: _count,
         lastUpdate: _lastUpdate,
         error: _lastError,
+        keyRequired: _keyRequired,
         loading: _loading,
         loadingLabel: _loadingLabel,
         source,
