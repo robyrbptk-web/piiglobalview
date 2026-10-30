@@ -9688,3 +9688,58 @@ body.scene-playback-mode #key-setup {
     min-height: 40px;
   }
 }
+
+/* ── Lantai huruf teks di dalam dock pada layar sentuh ──────────────
+   Kontrol sudah ≥38px, tetapi label-nya masih 6-9px dan tidak terbaca
+   di ponsel. Nilainya dinaikkan seperlunya; blok ini paling akhir
+   supaya menang atas aturan sekhusus sama seperti
+   #scene-panel.collapsed .panel-title. */
+@media (max-width: 720px) {
+  #command-dock .location-pill,
+  #command-dock .btn-label,
+  #command-dock .map-stack-chip-label {
+    font-size: 10.5px;
+  }
+
+  #command-dock .btn-key,
+  #command-dock .map-stack-chip-req {
+    font-size: 8.5px;
+  }
+
+  #command-dock .location-mini-city,
+  #command-dock .panel-mini-value {
+    font-size: 10px;
+  }
+
+  #command-dock .location-mini-poi,
+  #command-dock .pp-stack-status,
+  #command-dock .panel-mini-label {
+    font-size: 9.5px;
+  }
+
+  #command-dock .panel-title {
+    font-size: 10px;
+    letter-spacing: 2.2px;
+  }
+
+  #command-dock .param-panel-title {
+    font-size: 9.5px;
+    letter-spacing: 2px;
+  }
+
+  .gev-voice-kicker,
+  .gev-voice-help-kicker {
+    font-size: 9px;
+    letter-spacing: .06em;
+  }
+
+  .gev-voice-tier-btn,
+  .gev-voice-cost-value,
+  .gev-mic-label {
+    font-size: 9.5px;
+  }
+
+  .gev-voice-error-hint {
+    font-size: 10px;
+  }
+}
