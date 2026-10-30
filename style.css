@@ -9601,3 +9601,90 @@ body.scene-playback-mode #key-setup {
   border-color: rgba(255, 170, 150, 0.65);
   outline: none;
 }
+
+/* ── Sentuhan ponsel: kontrol kecil di dalam dock diperbesar ─────
+   Semua target ketuk di bawah 720px dinaikkan ke ≥36-44px. Panel
+   tempat kontrol ini berada sudah punya overflow-y:auto, jadi
+   tinggi tambahan tidak memotong isi. */
+@media (max-width: 720px) {
+  #clear-selected-layers,
+  #share-btn,
+  #reset-globe-view {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .data-toggle-btn {
+    min-width: 54px;
+    min-height: 38px;
+    padding: 8px 10px;
+    font-size: 10px;
+  }
+
+  .scene-btn {
+    min-height: 40px;
+    padding: 10px;
+    font-size: 10px;
+  }
+
+  .panel-collapse-btn {
+    width: 38px;
+    height: 38px;
+    font-size: 16px;
+  }
+
+  #pp-toggles > .pp-header-row .pp-collapse-btn {
+    width: 30px;
+    height: 30px;
+    font-size: 14px;
+  }
+
+  .panel-header {
+    min-height: 40px;
+  }
+
+  #command-dock .panel-header,
+  #command-dock #control-panel .dock-tray-toggle {
+    min-height: 40px;
+  }
+
+  /* Panel ciutkan punya aturan sendiri (a=2,b=2); samakan lalu menangkan lewat urutan. */
+  #command-dock #control-panel.collapsed .panel-header,
+  #command-dock #control-panel .dock-tray-toggle.panel-header {
+    min-height: 40px;
+  }
+
+  #key-setup-chip,
+  .key-setup-chip {
+    min-height: 38px;
+  }
+
+  /* Kapel aksi di atas globe: sedikit lebih tinggi tanpa menutupi peta. */
+  #world-overlay-action-list button {
+    min-height: 30px;
+  }
+
+  .cctv-cal-value {
+    min-height: 38px;
+    padding: 8px 10px;
+    font-size: 10px;
+  }
+
+  .gev-voice-tier-btn {
+    min-height: 32px;
+    padding: 5px 10px;
+  }
+
+  .gev-voice-error-dismiss {
+    min-height: 36px;
+    padding: 8px 12px;
+  }
+
+  .context-radio-toggle {
+    min-height: 38px;
+  }
+
+  select {
+    min-height: 40px;
+  }
+}
