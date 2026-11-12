@@ -1305,54 +1305,24 @@ export function createRadioProxyMiddleware({ fetchImpl = null, lookupImpl = look
 }
 
 // ---------------------------------------------------------------------------
-// Indonesian public-data proxies (schools + volcanoes)
+// Indonesian public-data proxy (volcanoes)
 // ---------------------------------------------------------------------------
-const SEKOLAH_UPSTREAM = 'https://sekolah.devapi.id/sekolah';
-/**
- * Province codes (Kemendagri) used for the national stratified sample.
- *
- * api-sekolah ignores `page` and forces `limit=10` whenever `kode_wilayah` is
- * present, and a global `limit=100` query only reaches 3–6 provinces. A
- * 10-row query per province is therefore the only way to get nationwide
- * coverage: 38 calls, merged and de-duplicated by NPSN.
- */
-const SEKOLAH_PROVINCE_CODES = Object.freeze([
-  '11', '12', '13', '14', '15', '16', '17', '18', '19', '21',
-  '31', '32', '33', '34', '35', '36',
-  '51', '52', '53',
-  '61', '62', '63', '64', '65',
-  '71', '72', '73', '74', '75', '76',
-  '81', '82',
-  '91', '92', '93', '94', '95', '96',
-]);
-const SEKOLAH_SAMPLE_TTL_MS = 24 * 3600_000;
-const SEKOLAH_FANOUT_CONCURRENCY = 3;
-/** Gap between province queries; the upstream publishes a 60 req/min budget. */
-const SEKOLAH_FANOUT_GAP_MS = 150;
 const VOLCANO_UPSTREAM = 'https://indonesia-public-static-api.vercel.app/api/volcanoes';
 const VOLCANO_TTL_MS = 7 * 24 * 3600_000;
 const INDONESIAN_DATA_CACHE_DIR = path.join(process.cwd(), '.gev-cache');
 
-const sleepMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
 /**
- * Proxy for Indonesian public datasets:
- *  - `/api/sekolah`  → api-sekolah national sample (GitHub: ikhsan-rfl/api-sekolah)
+ * Proxy for the Indonesian volcano catalog:
  *  - `/api/volcanoes` → indonesia-public-static-api volcano catalog (MIT)
  *
- * Both use a memory + disk cache (`.gev-cache/`) with stale-serve on upstream
- * failure and in-flight coalescing, so a reload or an open tab can never fan
- * out duplicate upstream traffic.
+ * Memory + disk cache (`.gev-cache/`) with stale-serve on upstream failure and
+ * in-flight coalescing, so a reload or an open tab can never fan out duplicate
+ * upstream traffic.
  *
  * @returns {import('vite').Plugin}
  */
 function indonesianDataProxy() {
-  const sekolahCachePath = path.join(INDONESIAN_DATA_CACHE_DIR, 'sekolah-national.json');
   const volcanoCachePath = path.join(INDONESIAN_DATA_CACHE_DIR, 'volcanoes.json');
-  /** @type {{at:number, body:string}|null} */
-  let sekolahMem = null;
-  /** @type {Promise<{at:number, body:string}>|null} */
-  let sekolahInflight = null;
   /** @type {{at:number, body:string}|null} */
   let volcanoMem = null;
   /** @type {Promise<{at:number, body:string}>|null} */
@@ -1383,100 +1353,6 @@ function indonesianDataProxy() {
       'X-GEV-Cache': cacheState,
     });
     res.end(body);
-  }
-
-  async function fetchProvince(kode) {
-    const url = new URL(SEKOLAH_UPSTREAM);
-    url.searchParams.set('kode_wilayah', kode);
-    url.searchParams.set('limit', '10');
-    const upstream = await fetch(url, {
-      signal: AbortSignal.timeout(25000),
-      headers: { Accept: 'application/json' },
-    });
-    if (!upstream.ok) throw new Error(`HTTP ${upstream.status}`);
-    const parsed = await upstream.json();
-    if (parsed?.success !== true || !Array.isArray(parsed.data)) {
-      throw new Error('malformed response');
-    }
-    return parsed.data;
-  }
-
-  async function collectSekolahSample() {
-    const rows = [];
-    const failures = [];
-    let cursor = 0;
-    const worker = async () => {
-      while (cursor < SEKOLAH_PROVINCE_CODES.length) {
-        const kode = SEKOLAH_PROVINCE_CODES[cursor];
-        cursor += 1;
-        try {
-          rows.push(...await fetchProvince(kode));
-        } catch {
-          // One retry: a burst 429 or transient 5xx must not drop a province.
-          await sleepMs(1200);
-          try {
-            rows.push(...await fetchProvince(kode));
-          } catch {
-            failures.push(kode);
-          }
-        }
-        await sleepMs(SEKOLAH_FANOUT_GAP_MS);
-      }
-    };
-    await Promise.all(Array.from({ length: SEKOLAH_FANOUT_CONCURRENCY }, worker));
-    if (rows.length === 0) throw new Error('all province queries failed');
-    const seen = new Set();
-    const data = rows.filter((row) => {
-      const npsn = String(row?.npsn || '').trim();
-      if (!npsn || seen.has(npsn)) return false;
-      seen.add(npsn);
-      return true;
-    });
-    return {
-      success: true,
-      data,
-      meta: {
-        sampled: true,
-        provincesQueried: SEKOLAH_PROVINCE_CODES.length,
-        provincesFailed: failures,
-        limitPerProvince: 10,
-        fetchedAt: Date.now(),
-      },
-    };
-  }
-
-  async function loadSekolahSample() {
-    const now = Date.now();
-    if (sekolahMem && now - sekolahMem.at < SEKOLAH_SAMPLE_TTL_MS) {
-      return { entry: sekolahMem, cacheState: 'hit' };
-    }
-    if (!sekolahMem) sekolahMem = await readDisk(sekolahCachePath);
-    if (sekolahMem && now - sekolahMem.at < SEKOLAH_SAMPLE_TTL_MS) {
-      return { entry: sekolahMem, cacheState: 'disk' };
-    }
-    if (sekolahInflight) {
-      return { entry: await sekolahInflight, cacheState: 'coalesced' };
-    }
-    sekolahInflight = (async () => {
-      try {
-        const payload = await collectSekolahSample();
-        const entry = { at: Date.now(), body: JSON.stringify(payload) };
-        await writeDisk(sekolahCachePath, entry);
-        sekolahMem = entry;
-        return entry;
-      } finally {
-        sekolahInflight = null;
-      }
-    })();
-    try {
-      return { entry: await sekolahInflight, cacheState: 'miss' };
-    } catch (error) {
-      if (sekolahMem) {
-        console.warn('[indonesian-data-proxy] sekolah upstream failed, serving stale:', error?.message || error);
-        return { entry: sekolahMem, cacheState: 'stale' };
-      }
-      throw error;
-    }
   }
 
   async function loadVolcanoes() {
@@ -1520,15 +1396,6 @@ function indonesianDataProxy() {
   }
 
   const install = (server) => {
-    server.middlewares.use('/api/sekolah', async (req, res) => {
-      try {
-        const { entry, cacheState } = await loadSekolahSample();
-        sendJson(res, 200, entry.body, cacheState);
-      } catch (error) {
-        console.warn('[indonesian-data-proxy] sekolah unavailable:', error?.message || error);
-        sendJson(res, 502, JSON.stringify({ success: false, error: 'Sekolah API unavailable' }), 'miss');
-      }
-    });
     server.middlewares.use('/api/volcanoes', async (req, res) => {
       try {
         const { entry, cacheState } = await loadVolcanoes();
@@ -1542,206 +1409,6 @@ function indonesianDataProxy() {
 
   return {
     name: 'indonesian-data-proxy',
-    configureServer: install,
-    configurePreviewServer: install,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// API Indonesia (apiindonesia.id) proxy — server-side key brokering
-// ---------------------------------------------------------------------------
-const API_INDONESIA_UPSTREAM = 'https://use.apiindonesia.id';
-
-/**
- * Bulk datasets are paginated by the upstream (200 rows/page for hospitals,
- * 100 for Transjakarta), so nationwide coverage needs a few sequential pages.
- * `maxPages` keeps a cold pull bounded even if `meta.total_pages` is larger.
- */
-const API_INDONESIA_DATASETS = Object.freeze({
-  hospitals: Object.freeze({
-    path: '/api/v1/rumah-sakit',
-    perPage: 200,
-    maxPages: 5,
-    ttlMs: 24 * 3600_000,
-    cacheFile: 'api-indonesia-hospitals.json',
-  }),
-  transjakarta: Object.freeze({
-    path: '/api/v1/transjakarta/halte',
-    perPage: 100,
-    maxPages: 5,
-    ttlMs: 7 * 24 * 3600_000,
-    cacheFile: 'api-indonesia-transjakarta.json',
-  }),
-});
-
-/**
- * Proxy for the paid API Indonesia catalogue:
- *  - `/api/indonesia/hospitals`    → national hospital registry (BMKG-kompatible rows with lat/lng)
- *  - `/api/indonesia/transjakarta` → Transjakarta bus stop registry
- *
- * The `x-api-key` header is added here and the key never reaches the browser.
- * Same memory + disk cache (`.gev-cache/`) shape as the other Indonesian
- * proxies: stale-serve on upstream failure and in-flight coalescing.
- *
- * @returns {import('vite').Plugin}
- */
-function apiIndonesiaProxy() {
-  /** @type {Map<string, {at:number, body:string}>} */
-  const memory = new Map();
-  /** @type {Map<string, Promise<{at:number, body:string}>>} */
-  const inflight = new Map();
-  const cacheDir = INDONESIAN_DATA_CACHE_DIR;
-
-  async function readDisk(cacheFile) {
-    try {
-      const parsed = JSON.parse(await fsp.readFile(path.join(cacheDir, cacheFile), 'utf8'));
-      if (Number.isFinite(parsed?.at) && typeof parsed?.body === 'string') return parsed;
-    } catch { /* first run or invalid cache */ }
-    return null;
-  }
-
-  async function writeDisk(cacheFile, entry) {
-    try {
-      await fsp.mkdir(cacheDir, { recursive: true });
-      await fsp.writeFile(path.join(cacheDir, cacheFile), JSON.stringify(entry), 'utf8');
-    } catch (error) {
-      console.warn('[api-indonesia-proxy] cache write failed:', error?.message || error);
-    }
-  }
-
-  function sendJson(res, status, body, cacheState) {
-    if (res.headersSent) return;
-    res.writeHead(status, {
-      'Content-Type': 'application/json; charset=utf-8',
-      'Cache-Control': status === 200 ? 'public, max-age=3600' : 'no-store',
-      'X-GEV-Cache': cacheState,
-    });
-    res.end(body);
-  }
-
-  async function fetchPage(dataset, page) {
-    const url = new URL(`${API_INDONESIA_UPSTREAM}${dataset.path}`);
-    url.searchParams.set('page', String(page));
-    url.searchParams.set('per_page', String(dataset.perPage));
-    const upstream = await fetch(url, {
-      signal: AbortSignal.timeout(30000),
-      headers: {
-        Accept: 'application/json',
-        'x-api-key': String(process.env.API_INDONESIA_KEY || '').trim(),
-      },
-    });
-    if (upstream.status === 401 || upstream.status === 403) {
-      throw new Error('INVALID_API_KEY');
-    }
-    if (!upstream.ok) throw new Error(`HTTP ${upstream.status}`);
-    const parsed = await upstream.json();
-    const rows = Array.isArray(parsed?.data)
-      ? parsed.data
-      : Array.isArray(parsed) ? parsed : null;
-    if (!rows) throw new Error('malformed response');
-    return { rows, meta: parsed?.meta || null };
-  }
-
-  async function collect(key) {
-    const dataset = API_INDONESIA_DATASETS[key];
-    const rows = [];
-    let pagesFetched = 0;
-    let totalPages = null;
-    for (let page = 1; page <= dataset.maxPages; page += 1) {
-      const result = await fetchPage(dataset, page);
-      rows.push(...result.rows);
-      pagesFetched = page;
-      if (Number.isFinite(result.meta?.total_pages)) totalPages = result.meta.total_pages;
-      if (result.rows.length < dataset.perPage) break;
-      await sleepMs(250);
-    }
-    if (rows.length === 0) throw new Error('empty dataset');
-    const seen = new Set();
-    const data = rows.filter((row) => {
-      const id = String(row?.id ?? row?.code ?? '').trim();
-      if (!id || seen.has(id)) return false;
-      seen.add(id);
-      return true;
-    });
-    return {
-      success: true,
-      data,
-      meta: {
-        source: `${API_INDONESIA_UPSTREAM}${dataset.path}`,
-        pagesFetched,
-        perPage: dataset.perPage,
-        truncated: totalPages === null ? pagesFetched === dataset.maxPages : pagesFetched < totalPages,
-        fetchedAt: Date.now(),
-      },
-    };
-  }
-
-  async function load(key) {
-    const dataset = API_INDONESIA_DATASETS[key];
-    const now = Date.now();
-    let mem = memory.get(key) || null;
-    if (mem && now - mem.at < dataset.ttlMs) return { entry: mem, cacheState: 'hit' };
-    if (!mem) {
-      mem = await readDisk(dataset.cacheFile);
-      if (mem) memory.set(key, mem);
-    }
-    if (mem && now - mem.at < dataset.ttlMs) return { entry: mem, cacheState: 'disk' };
-    const pending = inflight.get(key);
-    if (pending) return { entry: await pending, cacheState: 'coalesced' };
-    const task = (async () => {
-      try {
-        const payload = await collect(key);
-        const entry = { at: Date.now(), body: JSON.stringify(payload) };
-        await writeDisk(dataset.cacheFile, entry);
-        memory.set(key, entry);
-        return entry;
-      } finally {
-        inflight.delete(key);
-      }
-    })();
-    inflight.set(key, task);
-    try {
-      return { entry: await task, cacheState: 'miss' };
-    } catch (error) {
-      if (mem) {
-        console.warn(`[api-indonesia-proxy] ${key} upstream failed, serving stale:`, error?.message || error);
-        return { entry: mem, cacheState: 'stale' };
-      }
-      throw error;
-    }
-  }
-
-  const handler = (key) => async (req, res) => {
-    if (!String(process.env.API_INDONESIA_KEY || '').trim()) {
-      sendJson(res, 503, JSON.stringify({
-        success: false,
-        error: 'API_INDONESIA_KEY belum diatur',
-        code: 'MISSING_API_KEY',
-      }), 'miss');
-      return;
-    }
-    try {
-      const { entry, cacheState } = await load(key);
-      sendJson(res, 200, entry.body, cacheState);
-    } catch (error) {
-      const message = String(error?.message || error);
-      console.warn(`[api-indonesia-proxy] ${key} unavailable:`, message);
-      sendJson(res, 502, JSON.stringify({
-        success: false,
-        error: message === 'INVALID_API_KEY'
-          ? 'API_INDONESIA_KEY ditolak upstream'
-          : 'API Indonesia tidak tersedia',
-      }), 'miss');
-    }
-  };
-
-  const install = (server) => {
-    server.middlewares.use('/api/indonesia/hospitals', handler('hospitals'));
-    server.middlewares.use('/api/indonesia/transjakarta', handler('transjakarta'));
-  };
-
-  return {
-    name: 'api-indonesia-proxy',
     configureServer: install,
     configurePreviewServer: install,
   };
@@ -8609,7 +8276,6 @@ export default defineConfig(({ mode, command }) => {
       cctvProxy(),
       radioBrowserProxy(),
       indonesianDataProxy(),
-      apiIndonesiaProxy(),
       gbfsProxy(),
       adsbLolProxy(),
       aisLiveProxy(),

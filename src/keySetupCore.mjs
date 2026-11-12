@@ -14,7 +14,7 @@
 /** Longest accepted key/token value. Real provider keys are all far shorter. */
 export const KEY_SETUP_VALUE_LIMIT = 512;
 
-/** Most env vars accepted in one save. The registry defines nine. */
+/** Most env vars accepted in one save. */
 export const KEY_SETUP_UPDATE_LIMIT = 16;
 
 /** Header line written above keys the panel appends to a .env file. */
@@ -92,14 +92,6 @@ export const KEY_SETUP_KEYS = Object.freeze([
     unlocks: 'Kuota permintaan misi luar angkasa lebih tinggi',
     getUrl: 'https://thespacedevs.com',
     envVars: Object.freeze(['LL2_API_TOKEN']),
-    tier: 'free',
-  }),
-  Object.freeze({
-    id: 'api-indonesia',
-    title: 'API INDONESIA',
-    unlocks: 'Rumah sakit nasional + halte Transjakarta',
-    getUrl: 'https://dashboard.apiindonesia.id',
-    envVars: Object.freeze(['API_INDONESIA_KEY']),
     tier: 'free',
   }),
 ]);

@@ -157,26 +157,6 @@ export const DATA_CREDITS = [
       '(public domain; audio delivered directly by each broadcaster)',
   },
   {
-    key: 'sekolah',
-    html:
-      'Indonesian schools (national sample): ' +
-      '<a href="https://sekolah.devapi.id" target="_blank" rel="noopener">api-sekolah — sekolah.devapi.id</a> ' +
-      '(ikhsan-rfl; public keyless API)',
-  },
-  {
-    key: 'api-indonesia-hospitals',
-    html:
-      'Rumah sakit nasional: ' +
-      '<a href="https://apiindonesia.id" target="_blank" rel="noopener">API Indonesia</a> ' +
-      '(registry KEMENTRIAN KESEHATAN via use.apiindonesia.id)',
-  },
-  {
-    key: 'api-indonesia-transjakarta',
-    html:
-      'Halte Transjakarta: <a href="https://apiindonesia.id" target="_blank" rel="noopener">API Indonesia</a> ' +
-      'from PT Transportasi Jakarta GTFS (CC BY 4.0)',
-  },
-  {
     key: 'indonesia-volcanoes',
     html:
       'Indonesian volcano catalog: ' +

@@ -155,8 +155,8 @@ function encode(state) {
 
 test('production registry is exact, canonical, and rejects incomplete contracts', async () => {
   assert.equal(validateLayerStateRegistry(), true);
-  assert.equal(REGISTERED_LAYER_IDS.length, 20);
-  assert.equal(new Set(REGISTERED_LAYER_IDS).size, 20);
+  assert.equal(REGISTERED_LAYER_IDS.length, 17);
+  assert.equal(new Set(REGISTERED_LAYER_IDS).size, 17);
   assert.deepEqual(REGISTERED_LAYER_IDS, [...REGISTERED_LAYER_IDS].sort());
   assert.throws(
     () => validateLayerStateRegistry([...LAYER_STATE_REGISTRY, LAYER_STATE_REGISTRY[0]]),
@@ -223,8 +223,19 @@ test('v2 codec distinguishes absent from empty and keeps canonical deterministic
 });
 
 test('unknown enabled-layer tokens reject the payload instead of becoming an empty set', () => {
-  assert.equal(decodeLayerStateParams(new URLSearchParams('v=2&l=z')), null);
-  assert.equal(decodeLayerStateParams(new URLSearchParams('v=2&l=c.z')), null);
+  for (const token of ['z', 'h', 'k', 'j']) {
+    assert.equal(decodeLayerStateParams(new URLSearchParams(`v=2&l=${token}`)), null);
+    assert.equal(decodeLayerStateParams(new URLSearchParams(`v=2&l=c.${token}`)), null);
+  }
+});
+
+test('retired Indonesian layers are dropped from stored state while CCTV and volcanoes remain', () => {
+  const state = parseStoredLayerState(JSON.stringify({
+    v: 2,
+    l: ['indonesian-schools', 'indonesian-hospitals', 'transjakarta-halte', 'cctv', 'indonesian-volcanoes'],
+  }));
+  assert.deepEqual(state.enabledLayerIds, ['cctv', 'indonesian-volcanoes']);
+  assert.equal(new URLSearchParams(encode(state)).get('l'), 'c.o');
 });
 
 test('unknown and forbidden option fields are ignored while missing options use codec defaults', () => {
@@ -580,6 +591,7 @@ test('stored state is deterministic, rejects other versions, and stays within a 
   state.options.radio = { filter: 'genre:experimental-ambient', volume: 1 };
   const stored = serializeStoredLayerState(state);
   assert.deepEqual(parseStoredLayerState(stored), normalizeLayerState(state));
+  assert.equal(new URLSearchParams(encode(state)).get('l'), 'a.b.c.e.f.o.q.d.w.m.g.i.r.x.s.u.t');
   assert.equal(parseStoredLayerState('{"v":1,"l":[]}'), null);
   assert.ok(encode(state).length < 420, encode(state));
 });

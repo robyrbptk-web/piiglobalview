@@ -16,9 +16,6 @@ export const LAYER_DISPLAY_NAMES = Object.freeze({
   'local-firms': 'Kebakaran Aktif FIRMS',
   'telegeography-submarine-cables': 'Kabel Bawah Laut',
   'indonesian-volcanoes': 'Gunung Berapi Indonesia',
-  'indonesian-schools': 'Sekolah Indonesia',
-  'indonesian-hospitals': 'Rumah Sakit Indonesia',
-  'transjakarta-halte': 'Halte Transjakarta',
   earthquakes: 'Gempa Bumi (24 jam)',
   'military-installations': 'Instalasi Terpetakan',
 });

@@ -5,9 +5,7 @@ import { flyToOffice, installOfficeMarker } from './data/pbPiiOffice.js';
 import flightsLayer from './data/flights.js';
 import militaryFlightsLayer from './data/militaryFlights.js';
 import earthquakesLayer from './data/earthquakes.js';
-import schoolsLayer from './data/schools.js';
 import volcanoesLayer from './data/volcanoes.js';
-import { indonesianApiLayers } from './data/indonesianApiLayers.js';
 import satellitesLayer from './data/satellites.js';
 import rocketLaunchesLayer from './data/rocketLaunches.js';
 import trafficLayer from './data/traffic.js';
@@ -67,12 +65,10 @@ function describeError(error) {
 }
 
 /**
- * Indonesian public-data layers that need no key, so a first visit already has
- * Indonesian information on an Indonesian default view. Hospitals and
- * Transjakarta are deliberately absent: they are key-gated, and switching them
- * on would only paint a failure state the visitor did not ask for.
+ * Indonesian public-data layer that needs no key, so a first visit already has
+ * Indonesian information on an Indonesian default view.
  */
-const DEFAULT_INDONESIAN_LAYER_IDS = Object.freeze(['indonesian-schools', 'indonesian-volcanoes']);
+const DEFAULT_INDONESIAN_LAYER_IDS = Object.freeze(['indonesian-volcanoes']);
 
 /** Does this browser already hold an explicit layer preference? */
 function hasStoredLayerPreferences() {
@@ -234,11 +230,7 @@ async function init() {
     dataManager.register(flightsLayer);
     dataManager.register(militaryFlightsLayer);
     dataManager.register(earthquakesLayer);
-    dataManager.register(schoolsLayer);
     dataManager.register(volcanoesLayer);
-    for (const layer of indonesianApiLayers) {
-      dataManager.register(layer);
-    }
     dataManager.register(satellitesLayer);
     dataManager.register(rocketLaunchesLayer);
     rocketLaunchesLayer.attachDataManager(dataManager);
@@ -268,9 +260,9 @@ async function init() {
     dataManager.buildTogglePanel(document.getElementById('data-toggles'));
     styleManager.attachDataManager(dataManager);
 
-    // Fresh boot starts with the keyless Indonesian feeds already on. A share
-    // link owns its own state, and any saved preference — including one that
-    // switched these off — wins: the check mirrors LayerStateCoordinator's own
+    // Fresh boot starts with the keyless Indonesian volcano layer already on.
+    // A share link owns its own state, and any saved preference — including one
+    // that switched it off — wins: the check mirrors LayerStateCoordinator's own
     // source selection rather than guessing at it.
     if (!styleManager.hasShareState && !hasStoredLayerPreferences()) {
       for (const layerId of DEFAULT_INDONESIAN_LAYER_IDS) {
